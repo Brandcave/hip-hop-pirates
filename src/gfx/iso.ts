@@ -227,7 +227,6 @@ function tree(pal: Swatch, base: Swatch) {
   drawTop(ctx, top, base[1]);
 
   const groundY = top + HALF_H;
-  shadow(ctx, groundY, base);
 
   // Trunk rises from the centre of the diamond.
   const trunkTop = groundY - trunk;
@@ -245,11 +244,6 @@ function tree(pal: Swatch, base: Swatch) {
   return el;
 }
 
-/** A squashed dark patch on the ground, which is most of the sense of contact. */
-function shadow(ctx: CanvasRenderingContext2D, groundY: number, base: Swatch) {
-  ellipse(ctx, 16, groundY, 9, 4, base[2]);
-}
-
 function sign(pal: Swatch, base: Swatch) {
   const post = 8;
   const board = 9;
@@ -258,7 +252,6 @@ function sign(pal: Swatch, base: Swatch) {
   drawTop(ctx, top, base[1]);
 
   const groundY = top + HALF_H;
-  shadow(ctx, groundY, base);
   ctx.fillStyle = pal[3];
   ctx.fillRect(15, groundY - post, 2, post);
   ctx.fillStyle = pal[2];
@@ -303,11 +296,23 @@ function ellipse(
   }
 }
 
-/** A translucent contact shadow for actors, who move and so can't bake one in. */
-export function buildActorShadow(): HTMLCanvasElement {
+/**
+ * Shadow stamps. Both are solid black and fully opaque — direction, length and
+ * strength all come from the light at draw time, so one texture serves every
+ * hour of the day.
+ *
+ * Round things get a blob that stretches into a smear; blocks get a copy of the
+ * tile diamond, because a building's shadow should have the building's corners.
+ */
+export function buildShadowBlob(): HTMLCanvasElement {
   const { el, ctx } = canvas(16, 8);
-  ctx.globalAlpha = 0.26;
-  ellipse(ctx, 8, 4, 7, 3, '#000000');
+  ellipse(ctx, 8, 4, 8, 4, '#000000');
+  return el;
+}
+
+export function buildShadowDiamond(): HTMLCanvasElement {
+  const { el, ctx } = canvas(ISO_W, ISO_H);
+  drawTop(ctx, 0, '#000000');
   return el;
 }
 

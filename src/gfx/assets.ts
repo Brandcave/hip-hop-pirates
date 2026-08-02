@@ -4,8 +4,9 @@ import { SPECIES } from '../data/species';
 import { NPC_ART, PLAYER_ART, type ActorArt } from './actors';
 import { SPRITE_BUILDERS } from './creatures';
 import {
-  buildActorShadow,
   buildIsoTile,
+  buildShadowBlob,
+  buildShadowDiamond,
   ISO_H,
   isoMetrics,
   isoScreen,
@@ -72,8 +73,13 @@ export function buildAssets(scene: Phaser.Scene, theme: Theme) {
     scene.textures.addCanvas(def.key, tileCanvas(theme, def));
   }
 
-  if (scene.textures.exists('actor_shadow')) scene.textures.remove('actor_shadow');
-  scene.textures.addCanvas('actor_shadow', buildActorShadow());
+  for (const [key, make] of [
+    ['shadow_blob', buildShadowBlob],
+    ['shadow_diamond', buildShadowDiamond],
+  ] as const) {
+    if (scene.textures.exists(key)) scene.textures.remove(key);
+    scene.textures.addCanvas(key, make());
+  }
 
   buildActorTextures(scene, 'player', PLAYER_ART, theme.swatches.player);
   buildActorTextures(scene, 'npc', NPC_ART, theme.swatches.npc);

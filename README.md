@@ -16,6 +16,9 @@ npm run build    # static bundle in dist/
 
 ## What's in the proof of concept
 
+- A day/night cycle on a 24-minute clock (one real second per in-game minute),
+  shown at the top of the screen, driving the sun's direction, shadow length and
+  a colour grade over the whole world — battles included
 - A 2:1 isometric overworld: procedurally-drawn diamond tiles, extruded buildings
   and trees, contact shadows, and painter-order depth sorting so you walk behind
   anything with height
@@ -59,6 +62,15 @@ Three ideas hold it together:
 **All textures come from one function.** `gfx/assets.ts` builds every texture for
 the active theme. That's why theme swapping is just "regenerate and restart",
 and it's the single seam you replace when real artwork arrives.
+
+**The light has an opinion.** `gfx/light.ts` states it at the top of the file:
+the camera faces south, so the sun crosses the half of the sky we are looking
+into and its shadows fall back towards the viewer where they can be read. The
+sun rises due east at 06:00, stands south and high at 13:00, sets due west at
+20:00, and shadows sweep screen-left → screen-down → screen-right to match. Their
+length is deliberately capped short of physical accuracy: at this sprite scale a
+true dawn shadow detaches from its object and reads as a second object lying on
+the grass.
 
 **The projection is only a projection.** `gfx/iso.ts` owns the grid-to-screen
 mapping and draws every tile from its colour ramp — a top diamond plus extruded

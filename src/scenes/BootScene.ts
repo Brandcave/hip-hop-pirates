@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { MAPS, validateMap } from '../data/maps';
 import { createMonster } from '../data/species';
 import { buildAssets } from '../gfx/assets';
+import { dayStartForHour, START_HOUR } from '../engine/time';
 import { loadThemeName, THEMES } from '../gfx/palette';
 
 /**
@@ -21,6 +22,11 @@ export class BootScene extends Phaser.Scene {
 
     Object.values(MAPS).forEach(validateMap);
     buildAssets(this, theme);
+
+    // One timeline for the whole session: set once, never reset by a restart.
+    if (!this.registry.get('dayStart')) {
+      this.registry.set('dayStart', dayStartForHour(START_HOUR));
+    }
 
     if (!this.registry.get('party')) {
       this.registry.set('party', [createMonster('sproutle', 5)]);

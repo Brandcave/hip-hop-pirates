@@ -1,8 +1,10 @@
 import Phaser from 'phaser';
 import { VIEW_H, VIEW_W } from '../engine/constants';
 import { delay } from '../engine/input';
+import { worldTime } from '../engine/time';
 import { effectiveness, MOVES, type Move } from '../data/moves';
 import type { Monster } from '../data/species';
+import { lightFor } from '../gfx/light';
 import type { Theme } from '../gfx/palette';
 import { CanvasLayer } from '../ui/CanvasLayer';
 import { Dialog } from '../ui/Dialog';
@@ -11,6 +13,9 @@ import { Dialog } from '../ui/Dialog';
 const FIELD_W = 160;
 const FIELD_H = 96;
 const BOX_H = 48;
+
+/** Above the field and the combatants, below the HUD — which stays readable. */
+const GRADE_DEPTH = 15;
 
 interface BattleData {
   enemy: Monster;
@@ -34,6 +39,7 @@ export class BattleScene extends Phaser.Scene {
 
   private enemySprite!: Phaser.GameObjects.Image;
   private playerSprite!: Phaser.GameObjects.Image;
+  private grade!: Phaser.GameObjects.Rectangle;
 
   /**
    * The fight is composed for a 160x144 screen; on a larger viewport the whole
@@ -67,11 +73,23 @@ export class BattleScene extends Phaser.Scene {
       .image(this.ox + 42, this.oy + 76, `mon_${this.player.species.id}_back`)
       .setDepth(10);
 
+    // A fight at midnight should look like midnight.
+    this.grade = this.add
+      .rectangle(0, 0, VIEW_W, VIEW_H, 0xffffff)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(GRADE_DEPTH)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY);
+
     this.hud = new CanvasLayer(this, 'battle:hud', VIEW_W, VIEW_H, 0, 0, 20, this.theme.ui);
     this.dialog = new Dialog(this, this.theme.ui, 'battle:dialog', 200);
     this.drawHud();
 
     void this.run();
+  }
+
+  update() {
+    this.grade.setFillStyle(lightFor(worldTime(this.registry.get('dayStart'))).tint);
   }
 
   // -- presentation ---------------------------------------------------------

@@ -1,5 +1,6 @@
 import Phaser from 'phaser';
 import { computeViewport, PIXEL_SCALE, VIEW_H, VIEW_W } from './engine/constants';
+import { dayStartForHour } from './engine/time';
 import { BattleScene } from './scenes/BattleScene';
 import { BootScene } from './scenes/BootScene';
 import { WorldScene } from './scenes/WorldScene';
@@ -21,7 +22,10 @@ const game = new Phaser.Game({
 
 // Handy for poking at scene state from the devtools console during development.
 if (import.meta.env.DEV) {
-  (window as unknown as { game: Phaser.Game }).game = game;
+  const dev = window as unknown as { game: Phaser.Game; setHour: (h: number) => void };
+  dev.game = game;
+  // Jump the world clock, for looking at the light at a given hour.
+  dev.setHour = (hour: number) => game.registry.set('dayStart', dayStartForHour(hour));
 }
 
 /**

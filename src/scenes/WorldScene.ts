@@ -11,8 +11,11 @@ import {
 import { Buttons, delay } from '../engine/input';
 import { MAPS, type MapDef, type MapObject } from '../data/maps';
 import { createMonster, type Monster } from '../data/species';
+import { worldTime } from '../engine/time';
 import { buildMapTexture, isTallTile } from '../gfx/assets';
-import { ISO_H, isoDepth, isoScreen, type IsoMetrics } from '../gfx/iso';
+import { ISO_H, ISO_W, isoDepth, isoScreen, type IsoMetrics } from '../gfx/iso';
+import { lightFor, type Light } from '../gfx/light';
+import { Clock } from '../ui/Clock';
 import {
   saveThemeName,
   THEME_ORDER,
@@ -31,6 +34,53 @@ const FOOT_OFFSET = 4;
 const PROP_HEADROOM = 48;
 
 /**
+ * Everything casts onto one layer just above the baked ground and below every
+ * prop, so shadows never climb up the things they are cast by.
+ */
+const SHADOW_DEPTH = -0.5;
+/** The night grade sits over the world but under the UI, which stays readable. */
+const GRADE_DEPTH = 9000;
+const UI_DEPTH = 9500;
+
+/**
+ * What each kind of tile throws.
+ *
+ * `girth` is the caster's own width on the ground — a tree's shadow is as wide
+ * as its canopy, a signpost's is as narrow as its post. Matching the footprint
+ * is what makes a shadow belong to its object rather than merely sit near it.
+ */
+interface CasterSpec {
+  height: number;
+  girth: number;
+  shape: 'blob' | 'diamond';
+}
+
+function shadowCaster(def: TileDef): CasterSpec | null {
+  switch (def.iso.kind) {
+    case 'tree':
+      return { height: 20, girth: 22, shape: 'blob' };
+    case 'sign':
+      return { height: 10, girth: 9, shape: 'blob' };
+    case 'block':
+      // Buildings shadow with their own square footprint, corners and all.
+      return { height: def.iso.height ?? 16, girth: ISO_W, shape: 'diamond' };
+    default:
+      // Grass blades and flowers are too low to throw anything worth drawing.
+      return null;
+  }
+}
+
+interface CastShadow {
+  image: Phaser.GameObjects.Image;
+  /** Where the shadow is anchored: the base of whatever is casting it. */
+  x: number;
+  y: number;
+  height: number;
+  /** Width of the caster's own footprint, before the light stretches it. */
+  girth: number;
+}
+
+/**
  * The overworld: grid-locked movement, tile collision, ledges, signs, NPCs and
  * wild encounters. All movement is tile-to-tile with a tween in between, which
  * is what gives the original games their deliberate, snappy feel.
@@ -42,7 +92,11 @@ export class WorldScene extends Phaser.Scene {
   private buttons!: Buttons;
   private dialog!: Dialog;
   private player!: Phaser.GameObjects.Sprite;
-  private playerShadow!: Phaser.GameObjects.Image;
+  private playerShadow!: CastShadow;
+  private shadows: CastShadow[] = [];
+  private grade!: Phaser.GameObjects.Rectangle;
+  private clock!: Clock;
+  private lastMinute = -1;
   private npcs: { def: MapObject; sprite: Phaser.GameObjects.Sprite }[] = [];
 
   private tileX = 0;
@@ -60,6 +114,8 @@ export class WorldScene extends Phaser.Scene {
     this.theme = this.registry.get('theme');
     this.map = MAPS[this.registry.get('mapId') ?? 'route1'];
     this.npcs = [];
+    this.shadows = [];
+    this.lastMinute = -1;
     this.moving = false;
     this.busy = false;
     this.turnTimer = 0;
@@ -74,10 +130,7 @@ export class WorldScene extends Phaser.Scene {
     for (const def of this.map.objects) {
       if (def.kind !== 'npc') continue;
       const at = this.screenPos(def.x, def.y);
-      this.add
-        .image(at.x, at.y, 'actor_shadow')
-        .setOrigin(0.5, 0.5)
-        .setDepth(isoDepth(def.x, def.y) + 0.25);
+      this.addShadow(at.x, at.y, 12, 11, 'blob');
       const sprite = this.add
         .sprite(at.x, at.y, `npc_${spriteDir(def.facing ?? 'down')}_0`)
         .setOrigin(0.5, 1)
@@ -90,10 +143,7 @@ export class WorldScene extends Phaser.Scene {
     this.tileX = saved?.x ?? this.map.spawn.x;
     this.tileY = saved?.y ?? this.map.spawn.y;
     const spawn = this.screenPos(this.tileX, this.tileY);
-    this.playerShadow = this.add
-      .image(spawn.x, spawn.y, 'actor_shadow')
-      .setOrigin(0.5, 0.5)
-      .setDepth(isoDepth(this.tileX, this.tileY) + 0.25);
+    this.playerShadow = this.addShadow(spawn.x, spawn.y, 12, 11, 'blob');
     this.player = this.add
       .sprite(spawn.x, spawn.y, 'player_down_0')
       .setOrigin(0.5, 1)
@@ -104,8 +154,18 @@ export class WorldScene extends Phaser.Scene {
     this.cameras.main.startFollow(this.player, true);
     this.cameras.main.roundPixels = true;
 
+    // Grades the world without touching the UI drawn above it.
+    this.grade = this.add
+      .rectangle(0, 0, VIEW_W, VIEW_H, 0xffffff)
+      .setOrigin(0, 0)
+      .setScrollFactor(0)
+      .setDepth(GRADE_DEPTH)
+      .setBlendMode(Phaser.BlendModes.MULTIPLY);
+
     this.buttons = new Buttons(this);
-    this.dialog = new Dialog(this, this.theme.ui);
+    this.dialog = new Dialog(this, this.theme.ui, `dialog:${this.scene.key}`, UI_DEPTH);
+    this.clock = new Clock(this, this.theme.ui, UI_DEPTH + 10);
+    this.applyLight();
 
     // Coming back from a battle: unfreeze and drop any keypresses it consumed.
     this.events.on(Phaser.Scenes.Events.RESUME, () => {
@@ -134,14 +194,74 @@ export class WorldScene extends Phaser.Scene {
           .image(p.x, p.y + ISO_H / 2, def.key)
           .setOrigin(0.5, 1)
           .setDepth(isoDepth(x, y));
+
+        const caster = shadowCaster(def);
+        if (caster) {
+          this.addShadow(p.x, p.y, caster.height, caster.girth, caster.shape);
+        }
       }
     }
   }
 
+  private addShadow(
+    x: number,
+    y: number,
+    height: number,
+    girth: number,
+    shape: 'blob' | 'diamond',
+  ): CastShadow {
+    const image = this.add
+      .image(x, y, shape === 'blob' ? 'shadow_blob' : 'shadow_diamond')
+      .setOrigin(0.5, 0.5)
+      .setDepth(SHADOW_DEPTH);
+    const shadow: CastShadow = { image, x, y, height, girth };
+    this.shadows.push(shadow);
+    return shadow;
+  }
+
+  /**
+   * Point every shadow away from the light and stretch it by the sun's height,
+   * then grade the scene to match.
+   *
+   * The sun only moves once per in-game minute — once a real second — so the
+   * couple of hundred static props are re-cast on that tick. Only the player's
+   * own shadow has to keep up with the frame rate.
+   */
+  private applyLight() {
+    const time = worldTime(this.registry.get('dayStart'));
+    const light = lightFor(time);
+    const minute = Math.floor(time.minutes);
+
+    if (minute === this.lastMinute) {
+      this.castShadow(this.playerShadow, light);
+      return;
+    }
+
+    this.lastMinute = minute;
+    for (const shadow of this.shadows) this.castShadow(shadow, light);
+    this.grade.setFillStyle(light.tint);
+    this.clock.update(time, light.isNight);
+  }
+
+  private castShadow(shadow: CastShadow, light: Light) {
+    const reach = shadow.height * light.length;
+    shadow.image
+      .setPosition(
+        shadow.x + (light.shadow.x * reach) / 2,
+        shadow.y + (light.shadow.y * reach) / 2,
+      )
+      .setRotation(Math.atan2(light.shadow.y, light.shadow.x))
+      // The long axis grows with the light; the short axis stays the footprint,
+      // squashed to the ground plane so it lies flat.
+      .setDisplaySize(shadow.girth + reach, shadow.girth / 2)
+      .setAlpha(light.alpha);
+  }
+
   update(_time: number, deltaMs: number) {
-    // The shadow trails the feet, one hair behind the actor in the sort order.
-    this.playerShadow.setPosition(this.player.x, this.player.y);
-    this.playerShadow.setDepth(this.player.depth - 0.25);
+    // The player's shadow is anchored to wherever the feet currently are.
+    this.playerShadow.x = this.player.x;
+    this.playerShadow.y = this.player.y;
+    this.applyLight();
 
     if (this.busy || this.moving) return;
 
