@@ -4,7 +4,8 @@ import { SPECIES } from '../data/species';
 import { NPC_ART, PLAYER_ART, type ActorArt } from './actors';
 import { SPRITE_BUILDERS } from './creatures';
 import {
-  buildIsoTile,
+  buildIsoGround,
+  buildIsoProp,
   buildShadowBlob,
   buildShadowDiamond,
   ISO_H,
@@ -12,7 +13,7 @@ import {
   isoScreen,
   type IsoMetrics,
 } from './iso';
-import { monsterSwatch, type Swatch, type Theme } from './palette';
+import { monsterSwatch, type Swatch, type SwatchName, type Theme } from './palette';
 import { flipArt as mirrorArt, makeTexture } from './pixels';
 import { TILES, type TileDef } from './tiles';
 
@@ -57,20 +58,28 @@ function buildActorAnims(scene: Phaser.Scene, name: string) {
   });
 }
 
-/** Iso tile art, drawn once per theme and registered as a texture each. */
-function tileCanvas(theme: Theme, def: TileDef) {
-  return buildIsoTile(def.iso, theme.swatches[def.swatch], theme.swatches.grass);
+/**
+ * The flat diamond under a tile. For a prop tile that is the terrain it stands
+ * in — grass beneath a tree, the field beneath tall grass — which is what the
+ * prop no longer draws for itself.
+ */
+function groundCanvas(theme: Theme, def: TileDef) {
+  const under = def.iso.ground;
+  if (under) return buildIsoGround({ kind: 'ground' }, theme.swatches[under as SwatchName]);
+  return buildIsoGround(def.iso, theme.swatches[def.swatch]);
 }
 
-/** A tile taller than one diamond has to be drawn as a depth-sorted prop. */
+/** Tiles with something standing on them get a depth-sorted sprite too. */
 export function isTallTile(def: TileDef) {
   return def.iso.kind !== 'ground' && def.iso.kind !== 'water';
 }
 
 export function buildAssets(scene: Phaser.Scene, theme: Theme) {
   for (const def of Object.values(TILES)) {
+    const prop = buildIsoProp(def.iso, theme.swatches[def.swatch]);
+    if (!prop) continue;
     if (scene.textures.exists(def.key)) scene.textures.remove(def.key);
-    scene.textures.addCanvas(def.key, tileCanvas(theme, def));
+    scene.textures.addCanvas(def.key, prop);
   }
 
   for (const [key, make] of [
@@ -117,10 +126,11 @@ export function buildMapTexture(
   const ctx = tex.getContext();
   ctx.imageSmoothingEnabled = false;
 
-  // Rasterise each distinct flat tile once, then blit.
+  // Every tile gets ground, props included — they draw above the shadow layer
+  // and would otherwise paint over the shadows cast across them.
   const stamps = new Map<string, HTMLCanvasElement>();
   for (const [ch, def] of Object.entries(TILES)) {
-    if (!isTallTile(def)) stamps.set(ch, tileCanvas(theme, def));
+    stamps.set(ch, groundCanvas(theme, def));
   }
 
   // Back to front, so the tiny overlaps at diamond edges resolve correctly.

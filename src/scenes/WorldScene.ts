@@ -149,8 +149,18 @@ export class WorldScene extends Phaser.Scene {
       .setOrigin(0.5, 1)
       .setDepth(isoDepth(this.tileX, this.tileY) + 0.5);
 
-    // Headroom above the map for tall props poking over the top row.
-    this.cameras.main.setBounds(0, -PROP_HEADROOM, metrics.width, metrics.height + PROP_HEADROOM);
+    // Headroom above the map for tall props poking over the top row. Bounds are
+    // only applied on an axis the map actually fills — on a wide window a map
+    // narrower than the view would otherwise clamp the camera and slide the
+    // player off centre, which reads as the world drifting rather than scrolling.
+    const boundsW = Math.max(metrics.width, VIEW_W);
+    const boundsH = Math.max(metrics.height + PROP_HEADROOM, VIEW_H);
+    this.cameras.main.setBounds(
+      (metrics.width - boundsW) / 2,
+      -PROP_HEADROOM + (metrics.height + PROP_HEADROOM - boundsH) / 2,
+      boundsW,
+      boundsH,
+    );
     this.cameras.main.startFollow(this.player, true);
     this.cameras.main.roundPixels = true;
 

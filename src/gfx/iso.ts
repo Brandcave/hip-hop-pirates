@@ -68,6 +68,12 @@ export type IsoKind =
 
 export interface IsoSpec {
   kind: IsoKind;
+  /**
+   * Ramp of the ground *underneath* a prop. Props draw above the shadow layer,
+   * so they must not paint their own ground — the map bakes it instead, and the
+   * shadow lands on it in between.
+   */
+  ground?: string;
   /** Extrusion in pixels, for `block`. */
   height?: number;
   /**
@@ -203,7 +209,6 @@ function water(pal: Swatch) {
 function tallGrass(pal: Swatch) {
   const blades = 6;
   const { el, ctx } = canvas(ISO_W, ISO_H + blades);
-  drawTop(ctx, blades, pal[1]);
   ctx.fillStyle = pal[2];
   for (const [x, y, h] of [
     [8, 9, 5],
@@ -219,12 +224,11 @@ function tallGrass(pal: Swatch) {
   return el;
 }
 
-function tree(pal: Swatch, base: Swatch) {
+function tree(pal: Swatch) {
   const trunk = 10;
   const canopy = 24;
   const { el, ctx } = canvas(ISO_W, ISO_H + trunk + canopy);
   const top = trunk + canopy;
-  drawTop(ctx, top, base[1]);
 
   const groundY = top + HALF_H;
 
@@ -244,12 +248,11 @@ function tree(pal: Swatch, base: Swatch) {
   return el;
 }
 
-function sign(pal: Swatch, base: Swatch) {
+function sign(pal: Swatch) {
   const post = 8;
   const board = 9;
   const { el, ctx } = canvas(ISO_W, ISO_H + post + board);
   const top = post + board;
-  drawTop(ctx, top, base[1]);
 
   const groundY = top + HALF_H;
   ctx.fillStyle = pal[3];
@@ -264,10 +267,8 @@ function sign(pal: Swatch, base: Swatch) {
   return el;
 }
 
-function flower(pal: Swatch, base: Swatch) {
+function flower(pal: Swatch) {
   const { el, ctx } = canvas(ISO_W, ISO_H + 3);
-  drawTop(ctx, 3, base[1]);
-  speckle(ctx, 3, base[2]);
   for (const [cx, cy] of [
     [13, 8],
     [20, 12],
@@ -316,25 +317,30 @@ export function buildShadowDiamond(): HTMLCanvasElement {
   return el;
 }
 
+/** The flat diamond a tile sits on. Baked into the map, under the shadow layer. */
+export function buildIsoGround(spec: IsoSpec, pal: Swatch): HTMLCanvasElement {
+  if (spec.kind === 'water') return water(pal);
+  return ground(pal, spec.tone ?? 1, spec.pattern ?? 'grass');
+}
+
 /**
- * Build one tile's art. `base` is the ramp of the ground a decoration stands on
- * (grass, normally), so props blend into the terrain around them.
+ * Everything a tile has *above* the ground — blades, a tree, a building. Drawn
+ * as a depth-sorted sprite with a transparent base, so shadows cast across the
+ * tile stay visible underneath it.
  */
-export function buildIsoTile(spec: IsoSpec, pal: Swatch, base: Swatch): HTMLCanvasElement {
+export function buildIsoProp(spec: IsoSpec, pal: Swatch): HTMLCanvasElement | null {
   switch (spec.kind) {
-    case 'water':
-      return water(pal);
     case 'tallGrass':
       return tallGrass(pal);
     case 'block':
       return block(pal, spec.height ?? 16);
     case 'tree':
-      return tree(pal, base);
+      return tree(pal);
     case 'sign':
-      return sign(pal, base);
+      return sign(pal);
     case 'flower':
-      return flower(pal, base);
+      return flower(pal);
     default:
-      return ground(pal, spec.tone ?? 1, spec.pattern ?? 'grass');
+      return null;
   }
 }
