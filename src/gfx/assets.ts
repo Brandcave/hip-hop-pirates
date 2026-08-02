@@ -1,11 +1,13 @@
 import Phaser from 'phaser';
 import type { MapDef } from '../data/maps';
 import { SPECIES } from '../data/species';
-import { NPC_ART, PLAYER_ART, type ActorArt } from './actors';
 import { SPRITE_BUILDERS } from './creatures';
 import {
   buildIsoGround,
   buildIsoProp,
+  TERRAIN,
+  variantAt,
+  VARIANTS,
   buildShadowBlob,
   buildShadowDiamond,
   ISO_H,
@@ -13,8 +15,9 @@ import {
   isoScreen,
   type IsoMetrics,
 } from './iso';
-import { monsterSwatch, type Swatch, type SwatchName, type Theme } from './palette';
+import { monsterSwatch, type SwatchName, type Theme } from './palette';
 import { flipArt as mirrorArt, makeTexture } from './pixels';
+import { ACTOR_KEYS, buildActorAnims } from './actorSheets';
 import { TILES, type TileDef } from './tiles';
 
 /**
@@ -24,49 +27,19 @@ import { TILES, type TileDef } from './tiles';
  * swapping to real PNG assets later means rewriting only this file.
  */
 
-const DIRS = ['down', 'up', 'side'] as const;
-
-function buildActorTextures(
-  scene: Phaser.Scene,
-  name: string,
-  actor: ActorArt,
-  pal: Swatch,
-) {
-  DIRS.forEach((dir) => {
-    actor[dir].forEach((frame, i) => {
-      makeTexture(scene, `${name}_${dir}_${i}`, frame, pal);
-    });
-  });
-}
-
-function buildActorAnims(scene: Phaser.Scene, name: string) {
-  DIRS.forEach((dir) => {
-    const key = `${name}_walk_${dir}`;
-    if (scene.anims.exists(key)) scene.anims.remove(key);
-    scene.anims.create({
-      key,
-      // idle -> stepA -> idle -> stepB reads as a proper four-beat walk cycle
-      frames: [
-        { key: `${name}_${dir}_1` },
-        { key: `${name}_${dir}_0` },
-        { key: `${name}_${dir}_2` },
-        { key: `${name}_${dir}_0` },
-      ],
-      frameRate: 8,
-      repeat: -1,
-    });
-  });
-}
-
 /**
  * The flat diamond under a tile. For a prop tile that is the terrain it stands
  * in — grass beneath a tree, the field beneath tall grass — which is what the
  * prop no longer draws for itself.
  */
-function groundCanvas(theme: Theme, def: TileDef) {
-  const under = def.iso.ground;
-  if (under) return buildIsoGround({ kind: 'ground' }, theme.swatches[under as SwatchName]);
-  return buildIsoGround(def.iso, theme.swatches[def.swatch]);
+function groundCanvas(theme: Theme, def: TileDef, variant: number) {
+  const terrain = TERRAIN[def.iso.terrain];
+  return buildIsoGround(def.iso.terrain, theme.swatches[terrain.swatch as SwatchName], variant);
+}
+
+/** Texture key for one variant of a tile's prop. */
+export function propKey(def: TileDef, variant: number) {
+  return `${def.key}_v${variant}`;
 }
 
 /** Tiles with something standing on them get a depth-sorted sprite too. */
@@ -75,11 +48,15 @@ export function isTallTile(def: TileDef) {
 }
 
 export function buildAssets(scene: Phaser.Scene, theme: Theme) {
+  // One texture per prop per variant, so a field of tall grass isn't a stencil.
   for (const def of Object.values(TILES)) {
-    const prop = buildIsoProp(def.iso, theme.swatches[def.swatch]);
-    if (!prop) continue;
-    if (scene.textures.exists(def.key)) scene.textures.remove(def.key);
-    scene.textures.addCanvas(def.key, prop);
+    for (let v = 0; v < VARIANTS; v++) {
+      const prop = buildIsoProp(def.iso, theme.swatches[def.swatch], v);
+      if (!prop) break;
+      const key = propKey(def, v);
+      if (scene.textures.exists(key)) scene.textures.remove(key);
+      scene.textures.addCanvas(key, prop);
+    }
   }
 
   for (const [key, make] of [
@@ -90,10 +67,8 @@ export function buildAssets(scene: Phaser.Scene, theme: Theme) {
     scene.textures.addCanvas(key, make());
   }
 
-  buildActorTextures(scene, 'player', PLAYER_ART, theme.swatches.player);
-  buildActorTextures(scene, 'npc', NPC_ART, theme.swatches.npc);
-  buildActorAnims(scene, 'player');
-  buildActorAnims(scene, 'npc');
+  // Actors are loaded art, not generated, so they need animations only.
+  for (const key of ACTOR_KEYS) buildActorAnims(scene, key);
 
   for (const species of Object.values(SPECIES)) {
     const build = SPRITE_BUILDERS[species.sprite];
@@ -128,16 +103,20 @@ export function buildMapTexture(
 
   // Every tile gets ground, props included — they draw above the shadow layer
   // and would otherwise paint over the shadows cast across them.
-  const stamps = new Map<string, HTMLCanvasElement>();
+  const stamps = new Map<string, HTMLCanvasElement[]>();
   for (const [ch, def] of Object.entries(TILES)) {
-    stamps.set(ch, groundCanvas(theme, def));
+    stamps.set(
+      ch,
+      Array.from({ length: VARIANTS }, (_, v) => groundCanvas(theme, def, v)),
+    );
   }
 
   // Back to front, so the tiny overlaps at diamond edges resolve correctly.
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
-      const stamp = stamps.get(map.layout[y][x]);
-      if (!stamp) continue;
+      const variants = stamps.get(map.layout[y][x]);
+      if (!variants) continue;
+      const stamp = variants[variantAt(x, y)];
       const p = isoScreen(x, y, metrics);
       ctx.drawImage(stamp, p.x - stamp.width / 2, p.y + ISO_H / 2 - stamp.height);
     }

@@ -2,6 +2,7 @@ import Phaser from 'phaser';
 import { MAPS, validateMap } from '../data/maps';
 import { createMonster } from '../data/species';
 import { buildAssets } from '../gfx/assets';
+import { preloadActors } from '../gfx/actorSheets';
 import { dayStartForHour, START_HOUR } from '../engine/time';
 import { loadThemeName, THEMES } from '../gfx/palette';
 
@@ -12,6 +13,10 @@ import { loadThemeName, THEMES } from '../gfx/palette';
 export class BootScene extends Phaser.Scene {
   constructor() {
     super('Boot');
+  }
+
+  preload() {
+    preloadActors(this);
   }
 
   create() {

@@ -1,14 +1,14 @@
 /**
  * Colour.
  *
- * Art is still authored as four indices per asset ('0' lightest .. '3' darkest,
- * the DMG convention), but the four colours are chosen *per asset* rather than
- * globally. So grass gets a green ramp, a roof gets a red one, and the player
- * gets skin/shirt/outline — while the art itself stays four-tone and readable.
+ * Tile and creature art is authored as four indices per asset ('0' lightest ..
+ * '3' darkest, the DMG convention), with the four colours chosen *per asset*
+ * rather than globally: grass gets a green ramp, a roof a red one. Actors are
+ * not in here at all — they are full-colour LPC sheets (see gfx/actorSheets.ts).
  *
- * A Theme is the full mapping. The monochrome themes assign the same ramp to
- * every asset, which is exactly the old Game Boy behaviour, so the colour switch
- * in the menu now runs from full colour down to real DMG green.
+ * A Theme is the full mapping. There was once a set of monochrome themes that
+ * gave every asset the same four-colour ramp, Game Boy style; they went when the
+ * actors became loaded 16-bit art, which a four-shade ramp cannot repaint.
  */
 
 /** Four colours, lightest to darkest, indexed by the digits used in art. */
@@ -34,8 +34,6 @@ export type SwatchName =
   | 'roof'
   | 'door'
   | 'ledge'
-  | 'player'
-  | 'npc'
   | 'monNormal'
   | 'monGrass'
   | 'monFire'
@@ -85,9 +83,6 @@ const COLOR: Theme = {
     roof: ['#e8756a', '#d1483f', '#d1483f', '#8f2f2c'],
     door: ['#a86b3c', '#c08a55', '#7c4a2c', '#4a2c1a'],
     ledge: ['#d9b892', GRASS_LIGHT, '#c4a077', '#8a6a45'],
-    // 0 skin, 1 trousers, 2 cap and shirt, 3 hair/brim/boots/outline.
-    player: ['#f5c99b', '#3f6fd8', '#e0453e', '#2d3352'],
-    npc: ['#f5c99b', '#4f8fd6', '#9a6bc4', '#2d3352'],
     monNormal: ['#f4ecd8', '#cbbfa4', '#9a8d73', '#413a2c'],
     monGrass: ['#eaffd0', '#7ec850', '#4f9c37', '#1f4d24'],
     monFire: ['#ffe9a8', '#f0913c', '#c9552a', '#5a2117'],
@@ -95,49 +90,13 @@ const COLOR: Theme = {
   },
 };
 
-const SWATCH_NAMES = Object.keys(COLOR.swatches) as SwatchName[];
-
-/**
- * A hardware-style theme: one four-colour ramp for absolutely everything, the
- * way a real Game Boy renders.
- */
-function mono(id: string, name: string, ramp: Swatch): Theme {
-  const swatches = Object.fromEntries(
-    SWATCH_NAMES.map((key) => [key, ramp]),
-  ) as Record<SwatchName, Swatch>;
-
-  // Two tiles carve out an index for a colour that a one-ramp theme has no use
-  // for — the tree's bark and the flower's grass speckle. Fold those back onto
-  // the shade they had before there was any colour to separate.
-  swatches.tree = [ramp[3], ramp[1], ramp[2], ramp[3]];
-  swatches.flower = [ramp[0], ramp[1], ramp[2], ramp[2]];
-  return {
-    id,
-    name,
-    backdrop: ramp[3],
-    ui: ramp,
-    // The same shades the four-colour build always used for the bar.
-    hp: { high: ramp[2], mid: ramp[1], low: ramp[3] },
-    battle: ramp,
-    swatches,
-  };
-}
-
 export const THEMES: Record<string, Theme> = {
   color: COLOR,
-  /** Original DMG "pea soup" green. */
-  dmg: mono('dmg', 'DMG', ['#9bbc0f', '#8bac0f', '#306230', '#0f380f']),
-  /** Game Boy Pocket greyscale. */
-  pocket: mono('pocket', 'POCKET', ['#e8e8e8', '#a0a0a0', '#585858', '#181818']),
-  /** Super Game Boy-ish warm palette. */
-  sgb: mono('sgb', 'SGB', ['#fff6d3', '#f9a875', '#eb6b6f', '#7c3f58']),
-  /** Modern cool alternative. */
-  ice: mono('ice', 'ICE', ['#e0f8f8', '#88c0d0', '#4c6e8c', '#1b2838']),
 };
 
 export type ThemeName = keyof typeof THEMES;
 
-export const THEME_ORDER: ThemeName[] = ['color', 'dmg', 'pocket', 'sgb', 'ice'];
+export const THEME_ORDER: ThemeName[] = ['color'];
 
 const STORAGE_KEY = 'sprite.theme';
 

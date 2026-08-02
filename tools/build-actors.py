@@ -68,6 +68,24 @@ def recolor(im, ramp_from, ramp_to):
     return im
 
 
+def detect_ramp(im, ramps, path):
+    """
+    Which ramp a base sheet was drawn in varies by asset — the garments here use
+    `white`, but the bandana ships in `black`. Guessing wrong silently produces a
+    layer that ignores its recolour, so read it off the pixels instead.
+    """
+    present = {px[:3] for px in im.get_flattened_data() if px[3] > 0}
+    scored = sorted(
+        ((sum(hex_to_rgb(c) in present for c in ramp), name)
+         for name, ramp in ramps.items()),
+        reverse=True,
+    )
+    hits, name = scored[0]
+    if hits < 2:
+        sys.exit(f"cannot identify the source ramp for {path}")
+    return name
+
+
 class Builder:
     def __init__(self, root: Path):
         self.root = root
@@ -77,7 +95,7 @@ class Builder:
         self.hair = json.load(open(pd / "hair" / "hair_ulpc.json"))
         self.used = []
 
-    def layer(self, path, palette=None, src=None, dst=None):
+    def layer(self, path, palette=None, dst=None):
         p = self.sheets / path
         if not p.exists():
             sys.exit(f"missing layer {p}\n(did the sparse-checkout include it?)")
@@ -88,7 +106,7 @@ class Builder:
         if palette is None:
             return im
         ramps = self.cloth if palette == "cloth" else self.hair
-        return recolor(im, ramps[src], ramps[dst])
+        return recolor(im, ramps[detect_ramp(im, ramps, path)], ramps[dst])
 
     def compose(self, name, layers):
         out = Image.new("RGBA", SHEET, (0, 0, 0, 0))
@@ -110,12 +128,12 @@ def build(root: Path):
         "player",
         [
             (10, b.layer("body/bodies/male/walk.png")),
-            (20, b.layer("legs/pantaloons/male/walk.png", "cloth", "white", "navy")),
-            (25, b.layer("feet/boots/fold/male/walk.png", "cloth", "white", "leather")),
+            (20, b.layer("legs/pantaloons/male/walk.png", "cloth", "navy")),
+            (25, b.layer("feet/boots/fold/male/walk.png", "cloth", "leather")),
             (35, b.layer("torso/clothes/longsleeve/longsleeve2_buttoned/male/walk.png")),
             (45, b.layer("torso/clothes/vest_open/male/walk/maroon.png")),
             (100, b.layer("head/heads/human/male/walk.png")),
-            (110, b.layer("beards/beard/basic/walk.png", "hair", "orange", "dark_brown")),
+            (110, b.layer("beards/beard/basic/walk.png", "hair", "dark_brown")),
             (115, b.layer("facial/patches/eyepatch/right/adult/walk/black.png")),
             (130, b.layer("hat/pirate/tricorne/captain/adult/walk/black.png")),
             (131, b.layer("hat/pirate/tricorne/captain/skull/adult/walk/black.png")),
@@ -128,12 +146,12 @@ def build(root: Path):
         "npc",
         [
             (10, b.layer("body/bodies/male/walk.png")),
-            (20, b.layer("legs/pantaloons/male/walk.png", "cloth", "white", "charcoal")),
-            (25, b.layer("feet/boots/fold/male/walk.png", "cloth", "white", "brown")),
+            (20, b.layer("legs/pantaloons/male/walk.png", "cloth", "charcoal")),
+            (25, b.layer("feet/boots/fold/male/walk.png", "cloth", "brown")),
             (35, b.layer("torso/clothes/longsleeve/longsleeve2_buttoned/male/walk.png")),
             (45, b.layer("torso/clothes/vest_open/male/walk/forest.png")),
             (100, b.layer("head/heads/human/male/walk.png")),
-            (120, b.layer("hat/pirate/bandana/adult/walk.png", "cloth", "white", "red")),
+            (120, b.layer("hat/pirate/bandana/adult/walk.png", "cloth", "red")),
         ],
     )
 

@@ -1,5 +1,12 @@
 import Phaser from 'phaser';
-import { computeViewport, PIXEL_SCALE, VIEW_H, VIEW_W } from './engine/constants';
+import {
+  computeViewport,
+  PIXEL_SCALE,
+  resetZoom,
+  VIEW_H,
+  VIEW_W,
+  zoomBy,
+} from './engine/constants';
 import { dayStartForHour } from './engine/time';
 import { BattleScene } from './scenes/BattleScene';
 import { BootScene } from './scenes/BootScene';
@@ -73,6 +80,36 @@ const toggleFullscreen = () => {
   else void document.documentElement.requestFullscreen();
 };
 
-window.addEventListener('keydown', (event) => {
-  if (event.code === 'KeyF') toggleFullscreen();
-});
+/**
+ * cmd/ctrl +/- zooms the game rather than the page. Zooming in magnifies each
+ * game pixel, so the same window holds fewer of them and shows less world;
+ * zooming out does the reverse. Numpad variants are included because laptops
+ * with a number pad send those codes instead.
+ */
+const ZOOM_IN = ['Equal', 'NumpadAdd'];
+const ZOOM_OUT = ['Minus', 'NumpadSubtract'];
+const ZOOM_RESET = ['Digit0', 'Numpad0'];
+
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (event.code === 'KeyF') {
+      toggleFullscreen();
+      return;
+    }
+    if (!event.metaKey && !event.ctrlKey) return;
+
+    let changed: boolean | null = null;
+    if (ZOOM_IN.includes(event.code)) changed = zoomBy(1);
+    else if (ZOOM_OUT.includes(event.code)) changed = zoomBy(-1);
+    else if (ZOOM_RESET.includes(event.code)) changed = resetZoom();
+    if (changed === null) return;
+
+    // Swallow the browser's own zoom even at the ends of the range, so hitting
+    // the limit doesn't suddenly start scaling the page instead.
+    event.preventDefault();
+    if (changed) onViewportChanged();
+  },
+  // Capture, to get ahead of anything the scenes bind on the window.
+  true,
+);

@@ -1,4 +1,17 @@
 import type { Swatch } from './palette';
+import { drawGrass } from './tiles/grass';
+import {
+  HALF_H,
+  HALF_W,
+  ISO_H,
+  ISO_W,
+  makeCanvas as canvas,
+  rowSpan,
+  VARIANTS,
+} from './tiles/kit';
+import { drawRoad } from './tiles/road';
+import { BLADE_HEIGHT, drawTallGrassBlades, drawTallGrassGround } from './tiles/tallgrass';
+import { drawWater } from './tiles/water';
 
 /**
  * Isometric projection and procedurally-drawn iso tile art.
@@ -13,12 +26,15 @@ import type { Swatch } from './palette';
  * without drawing a single tile by hand.
  */
 
-/** Diamond footprint of one grid tile. 2:1 is the classic iso ratio. */
-export const ISO_W = 32;
-export const ISO_H = 16;
+export { ISO_H, ISO_W, VARIANTS };
 
-const HALF_W = ISO_W / 2;
-const HALF_H = ISO_H / 2;
+/**
+ * Props were authored against a 32x16 diamond. `U` scales those coordinates to
+ * whatever ISO_W is now, so the shapes stay in proportion and the numbers stay
+ * readable as the sizes they were drawn at. Terrain tiles in ./tiles are drawn
+ * at full resolution instead — they have detail worth the pixels.
+ */
+const U = ISO_W / 32;
 
 export interface IsoMetrics {
   /** Screen x of grid (0,0)'s centre. */
@@ -69,71 +85,45 @@ export type IsoKind =
 export interface IsoSpec {
   kind: IsoKind;
   /**
-   * Ramp of the ground *underneath* a prop. Props draw above the shadow layer,
-   * so they must not paint their own ground — the map bakes it instead, and the
-   * shadow lands on it in between.
+   * The ground this tile sits on. For a prop tile that is the terrain
+   * *underneath* it: props draw above the shadow layer, so they must not paint
+   * their own ground — the map bakes it, and the shadow lands on it in between.
    */
-  ground?: string;
+  terrain: TerrainName;
   /** Extrusion in pixels, for `block`. */
   height?: number;
-  /**
-   * Which shade of the ramp the top face uses. Ground tiles have no silhouette
-   * to tell them apart, so they lean on tone + pattern instead — that is what
-   * keeps a path readable against grass on the one-ramp monochrome themes.
-   */
-  tone?: 0 | 1 | 2 | 3;
-  /** Scatter drawn onto the top face. */
-  pattern?: PatternName;
 }
 
-export type PatternName = 'grass' | 'path' | 'sand' | 'none';
+export type TerrainName = 'grass' | 'tallGrass' | 'road' | 'water' | 'sand';
 
-const PATTERNS: Record<PatternName, [number, number][]> = {
-  grass: [
-    [12, 5],
-    [21, 8],
-    [15, 11],
-    [24, 6],
-  ],
-  path: [
-    [10, 6],
-    [16, 4],
-    [22, 9],
-    [13, 10],
-    [19, 12],
-    [26, 7],
-  ],
-  sand: [
-    [11, 7],
-    [12, 8],
-    [20, 5],
-    [21, 6],
-    [17, 11],
-    [18, 12],
-  ],
-  none: [],
+type TerrainDraw = (
+  ctx: CanvasRenderingContext2D,
+  pal: Swatch,
+  variant: number,
+  top?: number,
+) => void;
+
+/**
+ * Each terrain names the ramp it paints with and the module that paints it.
+ * A prop's ground goes through the same table, so the grass under a tree is
+ * drawn by exactly the code that drew the grass beside it — which is what keeps
+ * the seam invisible.
+ */
+export const TERRAIN: Record<TerrainName, { swatch: string; draw: TerrainDraw }> = {
+  grass: { swatch: 'grass', draw: drawGrass },
+  tallGrass: { swatch: 'tallGrass', draw: drawTallGrassGround },
+  road: { swatch: 'path', draw: drawRoad },
+  water: { swatch: 'water', draw: drawWater },
+  sand: { swatch: 'sand', draw: (ctx, pal, variant, top) => drawRoad(ctx, pal, variant, top) },
 };
 
-/** Horizontal extent of the top diamond on row `r`. */
-function rowSpan(r: number) {
-  const k = r < HALF_H ? r : ISO_H - 1 - r;
-  const w = (k + 1) * 4;
-  return { x: HALF_W - w / 2, w };
-}
-
-/** Last row of the top diamond that covers column `x` — where a side face starts. */
-function bottomRow(x: number) {
-  const d = x < HALF_W ? x : ISO_W - 1 - x;
-  return HALF_H + Math.floor(d / 2);
-}
-
-function canvas(w: number, h: number) {
-  const el = document.createElement('canvas');
-  el.width = w;
-  el.height = h;
-  const ctx = el.getContext('2d')!;
-  ctx.imageSmoothingEnabled = false;
-  return { el, ctx };
+/**
+ * Which variant a map cell uses. Hashed from the coordinates so it is stable
+ * across a rebake, and uncorrelated enough that no pattern emerges in the field.
+ */
+export function variantAt(x: number, y: number) {
+  const h = Math.imul(x, 73856093) ^ Math.imul(y, 19349663);
+  return (h >>> 0) % VARIANTS;
 }
 
 /** The top face, drawn row by row so the edges stay hard pixel steps. */
@@ -145,17 +135,10 @@ function drawTop(ctx: CanvasRenderingContext2D, top: number, color: string) {
   }
 }
 
-/** Scatter fixed specks so large areas of ground aren't dead flat. */
-function speckle(
-  ctx: CanvasRenderingContext2D,
-  top: number,
-  color: string,
-  pattern: PatternName = 'grass',
-) {
-  ctx.fillStyle = color;
-  for (const [x, y] of PATTERNS[pattern]) {
-    ctx.fillRect(x, top + y, 1, 1);
-  }
+/** Last row of the diamond that covers column `x` — where a side face starts. */
+function bottomRow(x: number) {
+  const d = x < HALF_W ? x : ISO_W - 1 - x;
+  return HALF_H + Math.floor(d / (ISO_W / ISO_H));
 }
 
 /** The two extruded side faces below the top diamond. */
@@ -179,54 +162,9 @@ function block(pal: Swatch, height: number) {
   return el;
 }
 
-function ground(pal: Swatch, tone: 0 | 1 | 2 | 3, pattern: PatternName) {
-  const { el, ctx } = canvas(ISO_W, ISO_H);
-  drawTop(ctx, 0, pal[tone]);
-  // One step darker than the face, wrapping around at the darkest shade.
-  speckle(ctx, 0, pal[tone === 3 ? 1 : tone + 1], pattern);
-  return el;
-}
-
-function water(pal: Swatch) {
-  const { el, ctx } = canvas(ISO_W, ISO_H);
-  drawTop(ctx, 0, pal[2]);
-  // Crests, clipped to the diamond so they follow its edges.
-  ctx.fillStyle = pal[1];
-  for (const [r, x, w] of [
-    [4, 10, 6],
-    [7, 18, 8],
-    [10, 8, 7],
-  ]) {
-    const span = rowSpan(r);
-    const from = Math.max(x, span.x);
-    const to = Math.min(x + w, span.x + span.w);
-    if (to > from) ctx.fillRect(from, r, to - from, 1);
-  }
-  return el;
-}
-
-/** Grass with blades standing proud of the tile — the encounter marker. */
-function tallGrass(pal: Swatch) {
-  const blades = 6;
-  const { el, ctx } = canvas(ISO_W, ISO_H + blades);
-  ctx.fillStyle = pal[2];
-  for (const [x, y, h] of [
-    [8, 9, 5],
-    [13, 6, 6],
-    [18, 4, 6],
-    [23, 7, 5],
-    [11, 12, 4],
-    [21, 11, 4],
-  ]) {
-    ctx.fillRect(x, y, 1, h);
-    ctx.fillRect(x + 1, y + 1, 1, h - 1);
-  }
-  return el;
-}
-
 function tree(pal: Swatch) {
-  const trunk = 10;
-  const canopy = 24;
+  const trunk = 10 * U;
+  const canopy = 24 * U;
   const { el, ctx } = canvas(ISO_W, ISO_H + trunk + canopy);
   const top = trunk + canopy;
 
@@ -235,49 +173,54 @@ function tree(pal: Swatch) {
   // Trunk rises from the centre of the diamond.
   const trunkTop = groundY - trunk;
   ctx.fillStyle = pal[0];
-  ctx.fillRect(14, trunkTop, 4, trunk);
+  ctx.fillRect(14 * U, trunkTop, 4 * U, trunk);
   ctx.fillStyle = pal[3];
-  ctx.fillRect(13, trunkTop, 1, trunk);
-  ctx.fillRect(18, trunkTop, 1, trunk);
+  ctx.fillRect(13 * U, trunkTop, U, trunk);
+  ctx.fillRect(18 * U, trunkTop, U, trunk);
 
   // Canopy sits *on* the trunk — its lower edge overlaps the bark by a few
   // pixels, otherwise the crown reads as floating.
-  const cy = trunkTop - canopy / 2 + 6;
-  ellipse(ctx, 16, cy, 13, 11, pal[3]);
-  ellipse(ctx, 14, cy - 2, 10, 8, pal[2]);
+  const cy = trunkTop - canopy / 2 + 6 * U;
+  ellipse(ctx, 16 * U, cy, 13 * U, 11 * U, pal[3]);
+  ellipse(ctx, 14 * U, cy - 2 * U, 10 * U, 8 * U, pal[2]);
   return el;
 }
 
 function sign(pal: Swatch) {
-  const post = 8;
-  const board = 9;
+  const post = 8 * U;
+  const board = 9 * U;
   const { el, ctx } = canvas(ISO_W, ISO_H + post + board);
   const top = post + board;
 
   const groundY = top + HALF_H;
   ctx.fillStyle = pal[3];
-  ctx.fillRect(15, groundY - post, 2, post);
+  ctx.fillRect(15 * U, groundY - post, 2 * U, post);
+  // The board sits *on* the post. Pinning it to the top of the canvas instead
+  // leaves it floating, because the canvas is taller than post + board.
+  const boardY = groundY - post - board;
   ctx.fillStyle = pal[2];
-  ctx.fillRect(9, 0, 14, board);
+  ctx.fillRect(9 * U, boardY, 14 * U, board);
   ctx.fillStyle = pal[0];
-  ctx.fillRect(10, 1, 12, board - 2);
+  ctx.fillRect(10 * U, boardY + U, 12 * U, board - 2 * U);
   ctx.fillStyle = pal[3];
-  ctx.fillRect(12, 3, 8, 1);
-  ctx.fillRect(12, 5, 6, 1);
+  ctx.fillRect(12 * U, boardY + 3 * U, 8 * U, U);
+  ctx.fillRect(12 * U, boardY + 5 * U, 6 * U, U);
   return el;
 }
 
 function flower(pal: Swatch) {
-  const { el, ctx } = canvas(ISO_W, ISO_H + 3);
-  for (const [cx, cy] of [
+  const { el, ctx } = canvas(ISO_W, ISO_H + 3 * U);
+  for (const [ax, ay] of [
     [13, 8],
     [20, 12],
   ]) {
+    const cx = ax * U;
+    const cy = ay * U;
     ctx.fillStyle = pal[0];
-    ctx.fillRect(cx - 1, cy, 3, 1);
-    ctx.fillRect(cx, cy - 1, 1, 3);
+    ctx.fillRect(cx - U, cy, 3 * U, U);
+    ctx.fillRect(cx, cy - U, U, 3 * U);
     ctx.fillStyle = pal[2];
-    ctx.fillRect(cx, cy, 1, 1);
+    ctx.fillRect(cx, cy, U, U);
   }
   return el;
 }
@@ -306,8 +249,8 @@ function ellipse(
  * tile diamond, because a building's shadow should have the building's corners.
  */
 export function buildShadowBlob(): HTMLCanvasElement {
-  const { el, ctx } = canvas(16, 8);
-  ellipse(ctx, 8, 4, 8, 4, '#000000');
+  const { el, ctx } = canvas(16 * U, 8 * U);
+  ellipse(ctx, 8 * U, 4 * U, 8 * U, 4 * U, '#000000');
   return el;
 }
 
@@ -318,9 +261,14 @@ export function buildShadowDiamond(): HTMLCanvasElement {
 }
 
 /** The flat diamond a tile sits on. Baked into the map, under the shadow layer. */
-export function buildIsoGround(spec: IsoSpec, pal: Swatch): HTMLCanvasElement {
-  if (spec.kind === 'water') return water(pal);
-  return ground(pal, spec.tone ?? 1, spec.pattern ?? 'grass');
+export function buildIsoGround(
+  terrain: TerrainName,
+  pal: Swatch,
+  variant: number,
+): HTMLCanvasElement {
+  const { el, ctx } = canvas(ISO_W, ISO_H);
+  TERRAIN[terrain].draw(ctx, pal, variant, 0);
+  return el;
 }
 
 /**
@@ -328,18 +276,26 @@ export function buildIsoGround(spec: IsoSpec, pal: Swatch): HTMLCanvasElement {
  * as a depth-sorted sprite with a transparent base, so shadows cast across the
  * tile stay visible underneath it.
  */
-export function buildIsoProp(spec: IsoSpec, pal: Swatch): HTMLCanvasElement | null {
+export function buildIsoProp(
+  spec: IsoSpec,
+  pal: Swatch,
+  variant: number,
+): HTMLCanvasElement | null {
   switch (spec.kind) {
-    case 'tallGrass':
-      return tallGrass(pal);
+    case 'tallGrass': {
+      const { el, ctx } = canvas(ISO_W, ISO_H + BLADE_HEIGHT);
+      drawTallGrassBlades(ctx, pal, variant);
+      return el;
+    }
     case 'block':
+      if (variant > 0) return null;
       return block(pal, spec.height ?? 16);
     case 'tree':
-      return tree(pal);
+      return variant > 0 ? null : tree(pal);
     case 'sign':
-      return sign(pal);
+      return variant > 0 ? null : sign(pal);
     case 'flower':
-      return flower(pal);
+      return variant > 0 ? null : flower(pal);
     default:
       return null;
   }

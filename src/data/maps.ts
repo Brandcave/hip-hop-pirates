@@ -10,6 +10,11 @@ export interface MapObject {
   text: string;
   /** Which way an NPC faces while idle. */
   facing?: 'down' | 'up' | 'left' | 'right';
+  /**
+   * How far an NPC will stray from where it was placed, in tiles. 0 pins it in
+   * place; anything larger lets it wander that many tiles in each direction.
+   */
+  roam?: number;
 }
 
 export interface EncounterEntry {
@@ -96,6 +101,7 @@ export const PALLET_ROUTE: MapDef = {
       y: 10,
       kind: 'npc',
       facing: 'down',
+      roam: 3,
       text: "HI! I'M SCOUTING THE ROUTE.\nPRESS Z TO TALK, AND WALK INTO TALL GRASS TO FIND CREATURES.\nYOU CAN HOP DOWN LEDGES, BUT NOT BACK UP!",
     },
   ],

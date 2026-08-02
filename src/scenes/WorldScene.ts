@@ -12,8 +12,9 @@ import { Buttons, delay } from '../engine/input';
 import { MAPS, type MapDef, type MapObject } from '../data/maps';
 import { createMonster, type Monster } from '../data/species';
 import { worldTime } from '../engine/time';
-import { buildMapTexture, isTallTile } from '../gfx/assets';
-import { ISO_H, ISO_W, isoDepth, isoScreen, type IsoMetrics } from '../gfx/iso';
+import { buildMapTexture, isTallTile, propKey } from '../gfx/assets';
+import { ISO_H, ISO_W, isoDepth, isoScreen, variantAt, type IsoMetrics } from '../gfx/iso';
+import { idleFrame, walkAnimKey } from '../gfx/actorSheets';
 import { lightFor, type Light } from '../gfx/light';
 import { Clock } from '../ui/Clock';
 import {
@@ -25,13 +26,10 @@ import {
 import { TILES, type TileDef } from '../gfx/tiles';
 import { Dialog } from '../ui/Dialog';
 
-const spriteDir = (dir: Dir) => (dir === 'left' || dir === 'right' ? 'side' : dir);
 const hexToInt = (hex: string) => parseInt(hex.slice(1), 16);
 
 /** How far below a tile's centre an actor's feet sit, so they stand on the diamond. */
-const FOOT_OFFSET = 4;
-/** Room above the map for the tallest prop, so the camera doesn't clip it. */
-const PROP_HEADROOM = 48;
+const FOOT_OFFSET = 8;
 
 /**
  * Everything casts onto one layer just above the baked ground and below every
@@ -80,6 +78,35 @@ interface CastShadow {
   girth: number;
 }
 
+/** How long an NPC stands still between steps, before its next decision. */
+const NPC_PAUSE_MIN_MS = 500;
+const NPC_PAUSE_MAX_MS = 2200;
+/** How often a decision comes out as a glance rather than a step. */
+const NPC_TURN_CHANCE = 0.3;
+
+/**
+ * A wandering NPC. It keeps its own tile coordinates because the map object only
+ * says where it was *placed* — `home`, the middle of the patch it paces around.
+ *
+ * While a step is in flight the NPC counts as standing on both the tile it left
+ * and the one it is heading for, so the player can never walk into the gap.
+ */
+interface Npc {
+  def: MapObject;
+  sprite: Phaser.GameObjects.Sprite;
+  shadow: CastShadow;
+  home: { x: number; y: number };
+  x: number;
+  y: number;
+  /** The tile being vacated mid-step, or null while standing. */
+  from: { x: number; y: number } | null;
+  facing: Dir;
+  moving: boolean;
+  roam: number;
+  /** Milliseconds until this NPC decides what to do next. */
+  timer: number;
+}
+
 /**
  * The overworld: grid-locked movement, tile collision, ledges, signs, NPCs and
  * wild encounters. All movement is tile-to-tile with a tween in between, which
@@ -97,7 +124,7 @@ export class WorldScene extends Phaser.Scene {
   private grade!: Phaser.GameObjects.Rectangle;
   private clock!: Clock;
   private lastMinute = -1;
-  private npcs: { def: MapObject; sprite: Phaser.GameObjects.Sprite }[] = [];
+  private npcs: Npc[] = [];
 
   private tileX = 0;
   private tileY = 0;
@@ -130,13 +157,26 @@ export class WorldScene extends Phaser.Scene {
     for (const def of this.map.objects) {
       if (def.kind !== 'npc') continue;
       const at = this.screenPos(def.x, def.y);
-      this.addShadow(at.x, at.y, 12, 11, 'blob');
+      const shadow = this.addShadow(at.x, at.y, 12, 11, 'blob');
+      const facing = def.facing ?? 'down';
       const sprite = this.add
-        .sprite(at.x, at.y, `npc_${spriteDir(def.facing ?? 'down')}_0`)
+        .sprite(at.x, at.y, 'npc', idleFrame(facing))
         .setOrigin(0.5, 1)
         .setDepth(isoDepth(def.x, def.y) + 0.5);
-      sprite.setFlipX(def.facing === 'left');
-      this.npcs.push({ def, sprite });
+      sprite.setFlipX(facing === 'left');
+      this.npcs.push({
+        def,
+        sprite,
+        shadow,
+        home: { x: def.x, y: def.y },
+        x: def.x,
+        y: def.y,
+        from: null,
+        facing,
+        moving: false,
+        roam: def.roam ?? 0,
+        timer: this.npcPause(),
+      });
     }
 
     const saved = this.registry.get('playerPos') as { x: number; y: number } | undefined;
@@ -145,22 +185,14 @@ export class WorldScene extends Phaser.Scene {
     const spawn = this.screenPos(this.tileX, this.tileY);
     this.playerShadow = this.addShadow(spawn.x, spawn.y, 12, 11, 'blob');
     this.player = this.add
-      .sprite(spawn.x, spawn.y, 'player_down_0')
+      .sprite(spawn.x, spawn.y, 'player', idleFrame('down'))
       .setOrigin(0.5, 1)
       .setDepth(isoDepth(this.tileX, this.tileY) + 0.5);
 
-    // Headroom above the map for tall props poking over the top row. Bounds are
-    // only applied on an axis the map actually fills — on a wide window a map
-    // narrower than the view would otherwise clamp the camera and slide the
-    // player off centre, which reads as the world drifting rather than scrolling.
-    const boundsW = Math.max(metrics.width, VIEW_W);
-    const boundsH = Math.max(metrics.height + PROP_HEADROOM, VIEW_H);
-    this.cameras.main.setBounds(
-      (metrics.width - boundsW) / 2,
-      -PROP_HEADROOM + (metrics.height + PROP_HEADROOM - boundsH) / 2,
-      boundsW,
-      boundsH,
-    );
+    // No camera bounds: the player stays dead centre wherever they walk, and a
+    // window wider than the map simply shows backdrop past its edges. Clamping
+    // to the map would slide the player off centre near every edge, which is the
+    // one thing a locked camera must never do.
     this.cameras.main.startFollow(this.player, true);
     this.cameras.main.roundPixels = true;
 
@@ -190,6 +222,12 @@ export class WorldScene extends Phaser.Scene {
     return { x: p.x, y: p.y + FOOT_OFFSET };
   }
 
+  /** Variant texture for a prop, falling back for props that have only one. */
+  private propTexture(def: TileDef, x: number, y: number) {
+    const key = propKey(def, variantAt(x, y));
+    return this.textures.exists(key) ? key : propKey(def, 0);
+  }
+
   /**
    * Everything with height becomes its own sprite so it can be depth-sorted
    * against the player — walk north of a tree and you pass behind it.
@@ -201,7 +239,7 @@ export class WorldScene extends Phaser.Scene {
         if (!def || !isTallTile(def)) continue;
         const p = isoScreen(x, y, this.metrics);
         this.add
-          .image(p.x, p.y + ISO_H / 2, def.key)
+          .image(p.x, p.y + ISO_H / 2, this.propTexture(def, x, y))
           .setOrigin(0.5, 1)
           .setDepth(isoDepth(x, y));
 
@@ -234,8 +272,8 @@ export class WorldScene extends Phaser.Scene {
    * then grade the scene to match.
    *
    * The sun only moves once per in-game minute — once a real second — so the
-   * couple of hundred static props are re-cast on that tick. Only the player's
-   * own shadow has to keep up with the frame rate.
+   * couple of hundred static props are re-cast on that tick. Only the shadows
+   * that walk around, the player's and the NPCs', keep up with the frame rate.
    */
   private applyLight() {
     const time = worldTime(this.registry.get('dayStart'));
@@ -244,6 +282,7 @@ export class WorldScene extends Phaser.Scene {
 
     if (minute === this.lastMinute) {
       this.castShadow(this.playerShadow, light);
+      for (const npc of this.npcs) this.castShadow(npc.shadow, light);
       return;
     }
 
@@ -271,6 +310,7 @@ export class WorldScene extends Phaser.Scene {
     // The player's shadow is anchored to wherever the feet currently are.
     this.playerShadow.x = this.player.x;
     this.playerShadow.y = this.player.y;
+    this.updateNpcs(deltaMs);
     this.applyLight();
 
     if (this.busy || this.moving) return;
@@ -316,7 +356,109 @@ export class WorldScene extends Phaser.Scene {
   }
 
   private isOccupied(x: number, y: number) {
-    return this.npcs.some(({ def }) => def.x === x && def.y === y);
+    return this.npcs.some(
+      (npc) =>
+        (npc.x === x && npc.y === y) || (npc.from?.x === x && npc.from?.y === y),
+    );
+  }
+
+  // -- NPCs -----------------------------------------------------------------
+
+  private npcPause() {
+    return Phaser.Math.Between(NPC_PAUSE_MIN_MS, NPC_PAUSE_MAX_MS);
+  }
+
+  /**
+   * Walk the NPCs. They pace within `roam` tiles of where they were placed, so
+   * the one standing by the sign is still by the sign when you come back, and
+   * they freeze while a dialogue or battle is up — a character who wanders off
+   * mid-sentence is worse than one who never moves at all.
+   */
+  private updateNpcs(deltaMs: number) {
+    for (const npc of this.npcs) {
+      // The shadow rides the sprite, wherever the tween has it right now.
+      npc.shadow.x = npc.sprite.x;
+      npc.shadow.y = npc.sprite.y;
+
+      if (npc.moving || npc.roam === 0 || this.busy) continue;
+
+      npc.timer -= deltaMs;
+      if (npc.timer > 0) continue;
+      npc.timer = this.npcPause();
+      this.npcDecide(npc);
+    }
+  }
+
+  private npcDecide(npc: Npc) {
+    const dirs = Phaser.Utils.Array.Shuffle<Dir>(['up', 'down', 'left', 'right']);
+
+    // A glance costs nothing and breaks up the pacing, so it stands in for a
+    // step often enough that the NPC doesn't read as a patrol on rails.
+    if (Math.random() < NPC_TURN_CHANCE) {
+      this.faceNpc(npc, dirs[0]);
+      return;
+    }
+
+    const dir = dirs.find((d) => this.npcCanStep(npc, d));
+    if (!dir) return;
+    this.faceNpc(npc, dir);
+    this.npcWalk(npc, dir);
+  }
+
+  private npcCanStep(npc: Npc, dir: Dir) {
+    const v = DIR_VECTORS[dir];
+    const nx = npc.x + v.x;
+    const ny = npc.y + v.y;
+
+    if (Math.abs(nx - npc.home.x) > npc.roam) return false;
+    if (Math.abs(ny - npc.home.y) > npc.roam) return false;
+
+    const tile = this.tileAt(nx, ny);
+    // Ledges are one-way drops meant for the player; an NPC that hopped one
+    // could never get back to its patch.
+    if (!tile || tile.solid || tile.ledge) return false;
+    if (this.isOccupied(nx, ny)) return false;
+    // Never step onto the player, or onto the tile they are stepping into.
+    if (nx === this.tileX && ny === this.tileY) return false;
+
+    return true;
+  }
+
+  private faceNpc(npc: Npc, dir: Dir) {
+    npc.facing = dir;
+    npc.sprite.anims.stop();
+    npc.sprite.setFrame(idleFrame(dir));
+    npc.sprite.setFlipX(dir === 'left');
+  }
+
+  private npcWalk(npc: Npc, dir: Dir) {
+    const v = DIR_VECTORS[dir];
+    const nx = npc.x + v.x;
+    const ny = npc.y + v.y;
+
+    npc.moving = true;
+    // Claim the destination up front and hold on to the tile being vacated, so
+    // neither the player nor another NPC can slip into the space mid-step.
+    npc.from = { x: npc.x, y: npc.y };
+    npc.x = nx;
+    npc.y = ny;
+
+    npc.sprite.play(walkAnimKey('npc', dir), true);
+    npc.sprite.setFlipX(dir === 'left');
+    const to = this.screenPos(nx, ny);
+    this.tweens.add({
+      targets: npc.sprite,
+      x: to.x,
+      y: to.y,
+      duration: WALK_MS,
+      onUpdate: () => npc.sprite.setDepth(npc.sprite.y + 0.5),
+      onComplete: () => {
+        npc.from = null;
+        npc.moving = false;
+        npc.sprite.setDepth(to.y + 0.5);
+        this.faceNpc(npc, dir);
+      },
+    });
   }
 
   private tryMove(dir: Dir) {
@@ -352,7 +494,7 @@ export class WorldScene extends Phaser.Scene {
 
   private walk(nx: number, ny: number) {
     this.moving = true;
-    this.player.play(`player_walk_${spriteDir(this.facing)}`, true);
+    this.player.play(walkAnimKey('player', this.facing), true);
     this.player.setFlipX(this.facing === 'left');
     const to = this.screenPos(nx, ny);
     this.tweens.add({
@@ -375,7 +517,7 @@ export class WorldScene extends Phaser.Scene {
   /** Ledge hop: two tiles down with a little arc. */
   private hop(nx: number, ny: number) {
     this.moving = true;
-    this.player.play(`player_walk_down`, true);
+    this.player.play(walkAnimKey('player', 'down'), true);
     const startX = this.player.x;
     const startY = this.player.y;
     const end = this.screenPos(nx, ny);
@@ -405,7 +547,7 @@ export class WorldScene extends Phaser.Scene {
 
   private setIdleFrame() {
     this.player.anims.stop();
-    this.player.setTexture(`player_${spriteDir(this.facing)}_0`);
+    this.player.setFrame(idleFrame(this.facing));
     this.player.setFlipX(this.facing === 'left');
   }
 
@@ -422,13 +564,15 @@ export class WorldScene extends Phaser.Scene {
     const v = DIR_VECTORS[this.facing];
     const tx = this.tileX + v.x;
     const ty = this.tileY + v.y;
-    const object = this.map.objects.find((o) => o.x === tx && o.y === ty);
+    // NPCs are looked up by where they are standing now, not where the map put
+    // them; signs and doors never move, so those still come from the map.
+    const npc = this.npcs.find((n) => n.x === tx && n.y === ty);
+    const object = npc?.def ?? this.map.objects.find((o) => o.x === tx && o.y === ty);
     if (!object) return;
 
     this.busy = true;
     this.setIdleFrame();
 
-    const npc = this.npcs.find((n) => n.def === object);
     if (npc) {
       // NPCs turn to face you before speaking.
       const opposite: Record<Dir, Dir> = {
@@ -437,22 +581,23 @@ export class WorldScene extends Phaser.Scene {
         left: 'right',
         right: 'left',
       };
-      const look = opposite[this.facing];
-      npc.sprite.setTexture(`npc_${spriteDir(look)}_0`);
-      npc.sprite.setFlipX(look === 'left');
+      this.faceNpc(npc, opposite[this.facing]);
     }
 
     await this.dialog.say(object.text);
     this.dialog.hide();
     this.buttons.flush();
     this.busy = false;
+    // Hold the pose a beat after the box closes rather than walking off on the
+    // last syllable.
+    if (npc) npc.timer = this.npcPause();
   }
 
   private async openMenu() {
     this.busy = true;
     this.setIdleFrame();
     for (;;) {
-      const choice = await this.dialog.choose(['PARTY', 'COLOR', 'CLOSE']);
+      const choice = await this.dialog.choose(['PARTY', 'CLOSE']);
       if (choice === 0) {
         const party = this.registry.get('party') as Monster[];
         const lines = party

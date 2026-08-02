@@ -1,0 +1,18 @@
+<meta charset="UTF-8" />
+<title>SPRITE — tile preview</title>
+<style>
+  body { margin: 0; background: #14181c; color: #cbd5e1;
+         font: 12px ui-monospace, Menlo, monospace; padding: 16px 20px 40px; }
+  h2 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+       color: #94a3b8; margin: 22px 0 8px; font-weight: 600; }
+  canvas { image-rendering: pixelated; display: block; }
+  .row { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .note { color: #64748b; max-width: 70ch; line-height: 1.5; }
+</style>
+<div class="note">
+  Each field is the terrain tiled as the game bakes it, variants picked by the
+  same hash the map uses. Zoom controls are per-field: the small one is how it
+  reads in play, the large one is where you fix pixels.
+</div>
+<div id="out"></div>
+<script type="module" src="/src/preview.ts"></script>
