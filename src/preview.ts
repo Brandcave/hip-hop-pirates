@@ -80,11 +80,6 @@ section(
   [mixed(colour, 1), mixed(colour, 2)],
 );
 
-section(
-  'monochrome (DMG) — everything shares one four-colour ramp',
-  (['.', '_', ',', '~'] as const).map((ch) => field(THEMES.dmg, ch, 1)),
-);
-
 /** Terrains meeting each other, which is where tiling problems show up. */
 function mixed(theme: Theme, zoom: number) {
   const layout = [

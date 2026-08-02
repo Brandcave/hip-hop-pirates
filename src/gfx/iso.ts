@@ -122,8 +122,14 @@ export const TERRAIN: Record<TerrainName, { swatch: string; draw: TerrainDraw }>
  * across a rebake, and uncorrelated enough that no pattern emerges in the field.
  */
 export function variantAt(x: number, y: number) {
-  const h = Math.imul(x, 73856093) ^ Math.imul(y, 19349663);
-  return (h >>> 0) % VARIANTS;
+  // The mix matters. Hashing straight into `% VARIANTS` keeps only the low bits,
+  // which for two odd multipliers collapses to something like (x + 3y) % 4 — a
+  // strictly periodic lattice, so any distinctive tile reappears on a regular
+  // diagonal grid and the variants buy nothing. Avalanche first, then reduce.
+  let h = Math.imul(x, 73856093) ^ Math.imul(y, 19349663);
+  h = Math.imul(h ^ (h >>> 16), 2246822507);
+  h = Math.imul(h ^ (h >>> 13), 3266489909);
+  return ((h ^ (h >>> 16)) >>> 0) % VARIANTS;
 }
 
 /** The top face, drawn row by row so the edges stay hard pixel steps. */
