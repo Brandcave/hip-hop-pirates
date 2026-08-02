@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <title>SPRITE</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #0b0e0b;
+        color: #7d8f6a;
+        overflow: hidden;
+      }
+
+      /*
+       * The canvas is sized in JS to cover the window exactly; centring it means
+       * the sub-pixel remainder is split between opposite edges instead of
+       * lopping a visible strip off one side.
+       */
+      #app, #screen {
+        height: 100%;
+        width: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        background: #0b0e0b;
+      }
+
+      #screen canvas {
+        display: block;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="screen"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
