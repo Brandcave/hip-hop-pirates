@@ -1,12 +1,19 @@
 import Phaser from 'phaser';
-import { TILE } from '../engine/constants';
 import type { MapDef } from '../data/maps';
 import { SPECIES } from '../data/species';
 import { NPC_ART, PLAYER_ART, type ActorArt } from './actors';
 import { SPRITE_BUILDERS } from './creatures';
+import {
+  buildActorShadow,
+  buildIsoTile,
+  ISO_H,
+  isoMetrics,
+  isoScreen,
+  type IsoMetrics,
+} from './iso';
 import { monsterSwatch, type Swatch, type Theme } from './palette';
-import { artToCanvas, flipArt as mirrorArt, makeTexture } from './pixels';
-import { TILES } from './tiles';
+import { flipArt as mirrorArt, makeTexture } from './pixels';
+import { TILES, type TileDef } from './tiles';
 
 /**
  * Every texture the game uses is generated here from source art, each asset
@@ -49,10 +56,24 @@ function buildActorAnims(scene: Phaser.Scene, name: string) {
   });
 }
 
+/** Iso tile art, drawn once per theme and registered as a texture each. */
+function tileCanvas(theme: Theme, def: TileDef) {
+  return buildIsoTile(def.iso, theme.swatches[def.swatch], theme.swatches.grass);
+}
+
+/** A tile taller than one diamond has to be drawn as a depth-sorted prop. */
+export function isTallTile(def: TileDef) {
+  return def.iso.kind !== 'ground' && def.iso.kind !== 'water';
+}
+
 export function buildAssets(scene: Phaser.Scene, theme: Theme) {
   for (const def of Object.values(TILES)) {
-    makeTexture(scene, def.key, def.art, theme.swatches[def.swatch]);
+    if (scene.textures.exists(def.key)) scene.textures.remove(def.key);
+    scene.textures.addCanvas(def.key, tileCanvas(theme, def));
   }
+
+  if (scene.textures.exists('actor_shadow')) scene.textures.remove('actor_shadow');
+  scene.textures.addCanvas('actor_shadow', buildActorShadow());
 
   buildActorTextures(scene, 'player', PLAYER_ART, theme.swatches.player);
   buildActorTextures(scene, 'npc', NPC_ART, theme.swatches.npc);
@@ -69,38 +90,42 @@ export function buildAssets(scene: Phaser.Scene, theme: Theme) {
 }
 
 /**
- * Bake an entire map into one texture. Fine for proof-of-concept map sizes; for
- * a full game swap this for a Phaser tilemap fed by Tiled JSON, which culls
- * offscreen tiles and supports layers.
+ * Bake the flat ground into one texture. Anything with height is left out and
+ * spawned as a sprite by the scene instead, so the player can walk behind it.
+ *
+ * Fine for proof-of-concept map sizes; for a full game swap this for a Phaser
+ * tilemap, which culls offscreen tiles and supports layers.
  */
 export function buildMapTexture(
   scene: Phaser.Scene,
   map: MapDef,
   theme: Theme,
-): { key: string; width: number; height: number } {
+): { key: string; metrics: IsoMetrics } {
   const key = `map:${map.id}`;
   const cols = map.layout[0].length;
   const rows = map.layout.length;
-  const width = cols * TILE;
-  const height = rows * TILE;
+  const metrics = isoMetrics(cols, rows);
 
   if (scene.textures.exists(key)) scene.textures.remove(key);
-  const tex = scene.textures.createCanvas(key, width, height)!;
+  const tex = scene.textures.createCanvas(key, metrics.width, metrics.height)!;
   const ctx = tex.getContext();
   ctx.imageSmoothingEnabled = false;
 
-  // Rasterise each distinct tile once, then blit.
+  // Rasterise each distinct flat tile once, then blit.
   const stamps = new Map<string, HTMLCanvasElement>();
   for (const [ch, def] of Object.entries(TILES)) {
-    stamps.set(ch, artToCanvas(def.art, theme.swatches[def.swatch]));
+    if (!isTallTile(def)) stamps.set(ch, tileCanvas(theme, def));
   }
 
+  // Back to front, so the tiny overlaps at diamond edges resolve correctly.
   for (let y = 0; y < rows; y++) {
     for (let x = 0; x < cols; x++) {
       const stamp = stamps.get(map.layout[y][x]);
-      if (stamp) ctx.drawImage(stamp, x * TILE, y * TILE);
+      if (!stamp) continue;
+      const p = isoScreen(x, y, metrics);
+      ctx.drawImage(stamp, p.x - stamp.width / 2, p.y + ISO_H / 2 - stamp.height);
     }
   }
   tex.refresh();
-  return { key, width, height };
+  return { key, metrics };
 }

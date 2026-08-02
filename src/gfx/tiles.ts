@@ -1,245 +1,21 @@
+import type { IsoSpec } from './iso';
 import type { SwatchName } from './palette';
-import { art, type Art } from './pixels';
 
 /**
- * 16x16 tile art. In a shipping game these become a Tiled tileset PNG; the
- * TileDef table below is the part that survives — the game only ever reasons
- * about `solid` / `encounter` / `ledge`, never about pixels.
+ * The tile table. Art is generated from `iso` + `swatch` (see gfx/iso.ts), so a
+ * tile is now a shape, a ramp and its rules — no pixels in this file.
+ *
+ * The game only ever reasons about `solid` / `encounter` / `ledge`; those flags
+ * are identical to the top-down build, which is why the projection change left
+ * movement, collision and encounters alone.
  */
-
-const GRASS = art(`
-  1111111111111111
-  1111111111111111
-  1121111111121111
-  1111111111111111
-  1111111111111111
-  1111111211111112
-  1111111111111111
-  1111111111111111
-  1111111111111111
-  1211111112111111
-  1111111111111111
-  1111111111111111
-  1111111111111111
-  1111112111111121
-  1111111111111111
-  1111111111111111
-`);
-
-const TALL_GRASS = art(`
-  1111111111111111
-  1111111111111111
-  1112111111121111
-  1111211111112111
-  1121121112112111
-  1211112212111211
-  1211111211111211
-  1221112211122211
-  1111111111111111
-  1111211111211111
-  1112111111121111
-  1121121121121111
-  1211112211112111
-  1211112111112211
-  1221112211122111
-  1111111111111111
-`);
-
-const PATH = art(`
-  0000000000000000
-  0010000000100000
-  0000000000000000
-  0000100000001000
-  0000000000000000
-  0100000010000000
-  0000000000000000
-  0000010000000010
-  0000000000000000
-  0010000000100000
-  0000000000000000
-  0000000100000000
-  0001000000001000
-  0000000000000000
-  0100000000000010
-  0000000000000000
-`);
-
-const WATER = art(`
-  2222222222222222
-  2222222222222222
-  2211222222112222
-  2222112222221122
-  2222222222222222
-  2222222222222222
-  1122222211222222
-  2222112222221122
-  2222222222222222
-  2222222222222222
-  2211222222112222
-  2222112222221122
-  2222222222222222
-  2222222222222222
-  1122222211222222
-  2222112222221122
-`);
-
-const TREE = art(`
-  1112222222221111
-  1122333333222111
-  1223333333322211
-  2233332233333221
-  2333322233333322
-  2333333333333332
-  2333233333323332
-  2333333333333332
-  2333333323333332
-  2233333333333322
-  1223333333333221
-  1122333333322111
-  1111133333311111
-  1111113003111111
-  1111113003111111
-  1111133003311111
-`);
-
-const FLOWER = art(`
-  1111111111111111
-  1111111111111111
-  1111111111111111
-  1111100111111111
-  1111011101111111
-  1111102011111111
-  1111011101111111
-  1111100111111111
-  1111113111111111
-  1111111111111111
-  1111111111111111
-  1111111131111111
-  1111111111111111
-  1111111111111111
-  1111111111111111
-  1111111111111111
-`);
-
-const SIGN = art(`
-  1111111111111111
-  1111111111111111
-  1122222222222211
-  1233333333333321
-  1230000000000321
-  1230222022220321
-  1230000000000321
-  1230222220220321
-  1230000000000321
-  1233333333333321
-  1122222222222211
-  1111112332111111
-  1111112332111111
-  1111112332111111
-  1111122332211111
-  1111111111111111
-`);
-
-const WALL = art(`
-  2222222222222222
-  2333333333333332
-  2300000000000032
-  2300000000000032
-  2333333333333332
-  2222222222222222
-  2333333333333332
-  2300000000000032
-  2300000000000032
-  2333333333333332
-  2222222222222222
-  2333333333333332
-  2300000000000032
-  2300000000000032
-  2333333333333332
-  2222222222222222
-`);
-
-const ROOF = art(`
-  3333333333333333
-  3222222222222223
-  3222222222222223
-  3333333333333333
-  3222222222222223
-  3222222222222223
-  3333333333333333
-  3222222222222223
-  3222222222222223
-  3333333333333333
-  3222222222222223
-  3222222222222223
-  3333333333333333
-  3222222222222223
-  3222222222222223
-  3333333333333333
-`);
-
-const DOOR = art(`
-  3333333333333333
-  3222222222222223
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000002200023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3200000000000023
-  3222222222222223
-  3333333333333333
-`);
-
-const LEDGE = art(`
-  1111111111111111
-  2222222222222222
-  3333333333333333
-  3222222222222223
-  3000000000000003
-  3222222222222223
-  3333333333333333
-  0000000000000000
-  0010000000100000
-  0000000000000000
-  0000100000001000
-  0000000000000000
-  0100000010000000
-  0000000000000000
-  0000010000000010
-  0000000000000000
-`);
-
-const SAND = art(`
-  0000000000000000
-  0000000000000000
-  0011000000110000
-  0000000000000000
-  0000000000000000
-  1100000011000000
-  0000000000000000
-  0000000000000000
-  0000110000001100
-  0000000000000000
-  0000000000000000
-  0000001100000011
-  0000000000000000
-  0000000000000000
-  0110000001100000
-  0000000000000000
-`);
 
 export interface TileDef {
   key: string;
-  art: Art;
-  /** Which named ramp this tile's four indices resolve to. */
+  /** Which named ramp this tile's colours come from. */
   swatch: SwatchName;
+  /** Shape and height in the iso projection. */
+  iso: IsoSpec;
   /** Blocks movement entirely. */
   solid?: boolean;
   /** Wild encounters can trigger when standing here. */
@@ -250,19 +26,45 @@ export interface TileDef {
 
 /**
  * The map legend. Each character in a MapDef layout maps to one of these.
- * Adding a tile is a two-line change: art above, entry here.
+ * Adding a tile is a one-line change.
  */
 export const TILES: Record<string, TileDef> = {
-  '.': { key: 'tile_grass', art: GRASS, swatch: 'grass' },
-  ',': { key: 'tile_tallgrass', art: TALL_GRASS, swatch: 'tallGrass', encounter: true },
-  '_': { key: 'tile_path', art: PATH, swatch: 'path' },
-  s: { key: 'tile_sand', art: SAND, swatch: 'sand' },
-  '#': { key: 'tile_tree', art: TREE, swatch: 'tree', solid: true },
-  '~': { key: 'tile_water', art: WATER, swatch: 'water', solid: true },
-  '*': { key: 'tile_flower', art: FLOWER, swatch: 'flower' },
-  S: { key: 'tile_sign', art: SIGN, swatch: 'sign', solid: true },
-  W: { key: 'tile_wall', art: WALL, swatch: 'wall', solid: true },
-  R: { key: 'tile_roof', art: ROOF, swatch: 'roof', solid: true },
-  D: { key: 'tile_door', art: DOOR, swatch: 'door', solid: true },
-  L: { key: 'tile_ledge', art: LEDGE, swatch: 'ledge', ledge: true },
+  '.': { key: 'tile_grass', swatch: 'grass', iso: { kind: 'ground' } },
+  ',': {
+    key: 'tile_tallgrass',
+    swatch: 'tallGrass',
+    iso: { kind: 'tallGrass' },
+    encounter: true,
+  },
+  // Tone 0 lifts trodden ground clear of the grass even in a single-ramp theme.
+  '_': { key: 'tile_path', swatch: 'path', iso: { kind: 'ground', tone: 0, pattern: 'path' } },
+  s: { key: 'tile_sand', swatch: 'sand', iso: { kind: 'ground', tone: 0, pattern: 'sand' } },
+  '#': { key: 'tile_tree', swatch: 'tree', iso: { kind: 'tree' }, solid: true },
+  '~': { key: 'tile_water', swatch: 'water', iso: { kind: 'water' }, solid: true },
+  '*': { key: 'tile_flower', swatch: 'flower', iso: { kind: 'flower' } },
+  S: { key: 'tile_sign', swatch: 'sign', iso: { kind: 'sign' }, solid: true },
+  W: {
+    key: 'tile_wall',
+    swatch: 'wall',
+    iso: { kind: 'block', height: 20 },
+    solid: true,
+  },
+  R: {
+    key: 'tile_roof',
+    swatch: 'roof',
+    iso: { kind: 'block', height: 28 },
+    solid: true,
+  },
+  D: {
+    key: 'tile_door',
+    swatch: 'door',
+    iso: { kind: 'block', height: 20 },
+    solid: true,
+  },
+  L: {
+    key: 'tile_ledge',
+    swatch: 'ledge',
+    iso: { kind: 'block', height: 5 },
+    ledge: true,
+  },
 };

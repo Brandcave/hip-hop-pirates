@@ -2,7 +2,6 @@ import Phaser from 'phaser';
 import {
   DIR_VECTORS,
   HOP_MS,
-  TILE,
   TURN_MS,
   VIEW_H,
   VIEW_W,
@@ -12,7 +11,8 @@ import {
 import { Buttons, delay } from '../engine/input';
 import { MAPS, type MapDef, type MapObject } from '../data/maps';
 import { createMonster, type Monster } from '../data/species';
-import { buildMapTexture } from '../gfx/assets';
+import { buildMapTexture, isTallTile } from '../gfx/assets';
+import { ISO_H, isoDepth, isoScreen, type IsoMetrics } from '../gfx/iso';
 import {
   saveThemeName,
   THEME_ORDER,
@@ -25,6 +25,11 @@ import { Dialog } from '../ui/Dialog';
 const spriteDir = (dir: Dir) => (dir === 'left' || dir === 'right' ? 'side' : dir);
 const hexToInt = (hex: string) => parseInt(hex.slice(1), 16);
 
+/** How far below a tile's centre an actor's feet sit, so they stand on the diamond. */
+const FOOT_OFFSET = 4;
+/** Room above the map for the tallest prop, so the camera doesn't clip it. */
+const PROP_HEADROOM = 48;
+
 /**
  * The overworld: grid-locked movement, tile collision, ledges, signs, NPCs and
  * wild encounters. All movement is tile-to-tile with a tween in between, which
@@ -32,10 +37,12 @@ const hexToInt = (hex: string) => parseInt(hex.slice(1), 16);
  */
 export class WorldScene extends Phaser.Scene {
   private theme!: Theme;
+  private metrics!: IsoMetrics;
   private map!: MapDef;
   private buttons!: Buttons;
   private dialog!: Dialog;
   private player!: Phaser.GameObjects.Sprite;
+  private playerShadow!: Phaser.GameObjects.Image;
   private npcs: { def: MapObject; sprite: Phaser.GameObjects.Sprite }[] = [];
 
   private tileX = 0;
@@ -57,15 +64,24 @@ export class WorldScene extends Phaser.Scene {
     this.busy = false;
     this.turnTimer = 0;
 
-    const { key, width, height } = buildMapTexture(this, this.map, this.theme);
-    this.add.image(0, 0, key).setOrigin(0, 0).setDepth(0);
+    const { key, metrics } = buildMapTexture(this, this.map, this.theme);
+    this.metrics = metrics;
+    // The baked ground sits under everything; props and actors sort above it.
+    this.add.image(0, 0, key).setOrigin(0, 0).setDepth(-1);
     this.cameras.main.setBackgroundColor(this.theme.backdrop);
+    this.addProps();
 
     for (const def of this.map.objects) {
       if (def.kind !== 'npc') continue;
+      const at = this.screenPos(def.x, def.y);
+      this.add
+        .image(at.x, at.y, 'actor_shadow')
+        .setOrigin(0.5, 0.5)
+        .setDepth(isoDepth(def.x, def.y) + 0.25);
       const sprite = this.add
-        .sprite(def.x * TILE + TILE / 2, def.y * TILE + TILE / 2, `npc_${spriteDir(def.facing ?? 'down')}_0`)
-        .setDepth(10);
+        .sprite(at.x, at.y, `npc_${spriteDir(def.facing ?? 'down')}_0`)
+        .setOrigin(0.5, 1)
+        .setDepth(isoDepth(def.x, def.y) + 0.5);
       sprite.setFlipX(def.facing === 'left');
       this.npcs.push({ def, sprite });
     }
@@ -73,11 +89,18 @@ export class WorldScene extends Phaser.Scene {
     const saved = this.registry.get('playerPos') as { x: number; y: number } | undefined;
     this.tileX = saved?.x ?? this.map.spawn.x;
     this.tileY = saved?.y ?? this.map.spawn.y;
+    const spawn = this.screenPos(this.tileX, this.tileY);
+    this.playerShadow = this.add
+      .image(spawn.x, spawn.y, 'actor_shadow')
+      .setOrigin(0.5, 0.5)
+      .setDepth(isoDepth(this.tileX, this.tileY) + 0.25);
     this.player = this.add
-      .sprite(this.tileX * TILE + TILE / 2, this.tileY * TILE + TILE / 2, 'player_down_0')
-      .setDepth(11);
+      .sprite(spawn.x, spawn.y, 'player_down_0')
+      .setOrigin(0.5, 1)
+      .setDepth(isoDepth(this.tileX, this.tileY) + 0.5);
 
-    this.cameras.main.setBounds(0, 0, width, height);
+    // Headroom above the map for tall props poking over the top row.
+    this.cameras.main.setBounds(0, -PROP_HEADROOM, metrics.width, metrics.height + PROP_HEADROOM);
     this.cameras.main.startFollow(this.player, true);
     this.cameras.main.roundPixels = true;
 
@@ -91,7 +114,35 @@ export class WorldScene extends Phaser.Scene {
     });
   }
 
+  /** Where an actor's feet go: the centre of the tile's diamond, nudged forward. */
+  private screenPos(tx: number, ty: number) {
+    const p = isoScreen(tx, ty, this.metrics);
+    return { x: p.x, y: p.y + FOOT_OFFSET };
+  }
+
+  /**
+   * Everything with height becomes its own sprite so it can be depth-sorted
+   * against the player — walk north of a tree and you pass behind it.
+   */
+  private addProps() {
+    for (let y = 0; y < this.map.layout.length; y++) {
+      for (let x = 0; x < this.map.layout[y].length; x++) {
+        const def = TILES[this.map.layout[y][x]];
+        if (!def || !isTallTile(def)) continue;
+        const p = isoScreen(x, y, this.metrics);
+        this.add
+          .image(p.x, p.y + ISO_H / 2, def.key)
+          .setOrigin(0.5, 1)
+          .setDepth(isoDepth(x, y));
+      }
+    }
+  }
+
   update(_time: number, deltaMs: number) {
+    // The shadow trails the feet, one hair behind the actor in the sort order.
+    this.playerShadow.setPosition(this.player.x, this.player.y);
+    this.playerShadow.setDepth(this.player.depth - 0.25);
+
     if (this.busy || this.moving) return;
 
     if (this.turnTimer > 0) {
@@ -173,11 +224,14 @@ export class WorldScene extends Phaser.Scene {
     this.moving = true;
     this.player.play(`player_walk_${spriteDir(this.facing)}`, true);
     this.player.setFlipX(this.facing === 'left');
+    const to = this.screenPos(nx, ny);
     this.tweens.add({
       targets: this.player,
-      x: nx * TILE + TILE / 2,
-      y: ny * TILE + TILE / 2,
+      x: to.x,
+      y: to.y,
       duration: WALK_MS,
+      // Depth tracks the screen position, so the sort stays right mid-step.
+      onUpdate: () => this.player.setDepth(this.player.y + 0.5),
       onComplete: () => {
         this.tileX = nx;
         this.tileY = ny;
@@ -192,19 +246,24 @@ export class WorldScene extends Phaser.Scene {
   private hop(nx: number, ny: number) {
     this.moving = true;
     this.player.play(`player_walk_down`, true);
+    const startX = this.player.x;
     const startY = this.player.y;
-    const endY = ny * TILE + TILE / 2;
+    const end = this.screenPos(nx, ny);
     this.tweens.add({
       targets: this.player,
-      y: endY,
+      y: end.y,
       duration: HOP_MS,
       onUpdate: (tween) => {
         const t = tween.progress;
         // Superimpose a parabola so the character visibly leaps.
-        this.player.y = Phaser.Math.Linear(startY, endY, t) - Math.sin(t * Math.PI) * 8;
+        this.player.x = Phaser.Math.Linear(startX, end.x, t);
+        this.player.y = Phaser.Math.Linear(startY, end.y, t) - Math.sin(t * Math.PI) * 10;
+        this.player.setDepth(this.player.y + 0.5);
       },
       onComplete: () => {
-        this.player.y = endY;
+        this.player.x = end.x;
+        this.player.y = end.y;
+        this.player.setDepth(end.y + 0.5);
         this.tileX = nx;
         this.tileY = ny;
         this.moving = false;

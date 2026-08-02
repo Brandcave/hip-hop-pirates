@@ -1,6 +1,6 @@
 # SPRITE
 
-A Game Boy-style top-down RPG in the browser. Renders in full colour with
+A Game Boy-style isometric RPG in the browser. Renders in full colour with
 DMG-sized pixels, filling the whole window: one game pixel is blown up by a
 whole-number factor taken from the window height, and the framebuffer is made as
 many game pixels wide and tall as fit. A wide window therefore shows more world
@@ -16,7 +16,10 @@ npm run build    # static bundle in dist/
 
 ## What's in the proof of concept
 
-- Grid-locked overworld movement with turn-in-place, tile collision, and ledges
+- A 2:1 isometric overworld: procedurally-drawn diamond tiles, extruded buildings
+  and trees, contact shadows, and painter-order depth sorting so you walk behind
+  anything with height
+- Grid-locked movement with turn-in-place, tile collision, and ledges
   you can hop down but not climb back up
 - A camera that follows the player and clamps to the map edges
 - Signs, NPCs that turn to face you, and a typewriter dialogue box with paging
@@ -43,8 +46,9 @@ game owns the canvas), or a bundled asset pipeline (not yet needed).
 ```
 src/
   engine/       constants (resolution, timings), input latching
-  gfx/          themes/colour, pixel-art helpers, bitmap font, tiles, actors,
-                creatures, and the single asset-building entry point
+  gfx/          themes/colour, iso projection + generated tile art, pixel-art
+                helpers, bitmap font, tiles, actors, creatures, and the single
+                asset-building entry point
   data/         maps, species, moves — pure data, no rendering
   ui/           CanvasLayer (immediate-mode HUD surface), Dialog
   scenes/       Boot (build assets) → World (overworld) → Battle
@@ -55,6 +59,11 @@ Three ideas hold it together:
 **All textures come from one function.** `gfx/assets.ts` builds every texture for
 the active theme. That's why theme swapping is just "regenerate and restart",
 and it's the single seam you replace when real artwork arrives.
+
+**The projection is only a projection.** `gfx/iso.ts` owns the grid-to-screen
+mapping and draws every tile from its colour ramp — a top diamond plus extruded
+side faces. Collision, ledges, encounters and interaction still work on the plain
+square grid, which is why going isometric touched no game logic at all.
 
 **Data is separate from rendering.** `data/maps.ts` describes a map as characters
 plus a legend; `data/species.ts` and `data/moves.ts` are plain tables. Adding a
@@ -79,15 +88,16 @@ still registers. Polling `key.isDown` alone silently drops fast taps.
 Everything visual is generated from source, which is right for a prototype and
 wrong for a real game. The swap points, in order of payoff:
 
-1. **Tiles** — draw a tileset PNG, load it as a spritesheet, and point
-   `TILES[ch].key` at frame indices. `gfx/tiles.ts` art strings go away; the
-   `solid` / `encounter` / `ledge` flags stay exactly as they are.
+1. **Tiles** — draw an isometric tileset PNG, load it as a spritesheet, and point
+   `TILES[ch].key` at frame indices. The generated art in `gfx/iso.ts` goes away;
+   the `solid` / `encounter` / `ledge` flags stay exactly as they are.
 2. **Maps** — build them in [Tiled](https://www.mapeditor.org/), export JSON, and
    switch `buildMapTexture()` for a real Phaser tilemap. That also gets you
    offscreen culling and multiple layers (so the player can walk behind things).
 3. **Characters and creatures** — author in Aseprite, export spritesheets, and
    replace `buildActorTextures()` / the creature builders. Animation keys don't
-   change.
+   change. Actors are currently top-down art standing in an iso world; proper iso
+   sprites want four facings (NE/SE/SW/NW) rather than the present down/up/side.
 4. **Font** — the 5×7 bitmap font in `gfx/font.ts` can stay; it's already the
    right shape. Widen glyphs there if you want a different typeface.
 
