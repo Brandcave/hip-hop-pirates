@@ -10,22 +10,16 @@ import type { Dir } from '../engine/constants';
  * LPC's fixed row order. Frame 0 of a row is the standing pose and frames 1..8
  * are the cycle, so idle and walking come out of the same row.
  *
- * Mapping a grid direction to a row is the whole isometric problem in one
- * table. Every grid step is a screen *diagonal*, and because the tile is 2:1
- * the horizontal half of that step is twice the vertical half:
+ * Each direction maps to the row of the same name, and that works because
+ * movement runs along the grid diagonals (see DIR_VECTORS): every heading
+ * projects to a screen cardinal, so the north view really does travel straight
+ * up and the east view straight right.
  *
- *   grid up    -> up and right     grid right -> down and right
- *   grid left  -> up and left      grid down  -> down and left
- *
- * So what a step reads as is its left/right component. Matching Dir to LPC's
- * rows one-for-one is the obvious mapping and it is wrong: it shows the back
- * view for grid-up while the character travels right, which reads as
- * moonwalking, and the front view for grid-down while they travel left.
- *
- * Of LPC's four views the profiles are the closest to a true diagonal heading,
- * so each direction takes the profile that agrees with where it is going. The
- * cost is that up and right share a view, as do down and left — unavoidable
- * with four-view art, and far less jarring than a character walking backwards.
+ * Getting here took two wrong turns worth recording. Moving along the grid axes
+ * instead sends every step off on a screen diagonal, and LPC has no 45° views —
+ * so the back view travels up-right and reads as moonwalking. Substituting the
+ * nearest profile fixes the moonwalk but makes up and right the same sprite.
+ * Neither is fixable in the art; only the movement axes fix it.
  */
 
 export const FRAME_W = 64;
@@ -40,19 +34,14 @@ const EAST = 3;
 
 /** The view each grid direction is drawn with — see the note above. */
 const DIR_ROW: Record<Dir, number> = {
-  up: EAST, // travels north-east
-  right: EAST, // travels south-east
-  down: WEST, // travels south-west
-  left: WEST, // travels north-west
+  up: NORTH,
+  left: WEST,
+  down: SOUTH,
+  right: EAST,
 };
 
 const DIRS: Dir[] = ['up', 'left', 'down', 'right'];
 
-// NORTH and SOUTH are LPC's back and front views. Nothing walks in them, since
-// no grid step is straight up or down the screen, but they stay named so the
-// row order documents itself and a future 8-way scheme can reach them.
-void NORTH;
-void SOUTH;
 
 export const ACTOR_KEYS = ['player', 'npc'] as const;
 export type ActorKey = (typeof ACTOR_KEYS)[number];

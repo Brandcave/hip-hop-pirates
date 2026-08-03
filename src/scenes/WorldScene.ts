@@ -59,9 +59,13 @@ interface CasterSpec {
 function shadowCaster(def: TileDef): CasterSpec | null {
   switch (def.iso.prop) {
     case 'tree':
-      return { height: 40, girth: 44, shape: 'blob' };
+      // Trees now come in four sizes, 42-62px. One shadow serves them all, so
+      // it is set for the middle of that range rather than the tallest.
+      return { height: 46, girth: 46, shape: 'blob' };
     case 'sign':
-      return { height: 20, girth: 18, shape: 'blob' };
+      // The board is the mass, and it sits 43px up; the mound at the foot is
+      // what sets the width.
+      return { height: 38, girth: 20, shape: 'blob' };
     default: {
       // Buildings shadow with their own square footprint, corners and all, at
       // whatever height the building art says they stand.
@@ -528,9 +532,13 @@ export class WorldScene extends Phaser.Scene {
     if (!tile) return;
 
     if (tile.ledge) {
-      const landing = this.tileAt(nx, ny + 1);
-      if (dir === 'down' && landing && !landing.solid && !this.isOccupied(nx, ny + 1)) {
-        this.hop(nx, ny + 1);
+      // One more step along the same heading — the hop clears the ledge and
+      // lands beyond it, which with diagonal movement is no longer "y + 1".
+      const lx = nx + v.x;
+      const ly = ny + v.y;
+      const landing = this.tileAt(lx, ly);
+      if (dir === 'down' && landing && !landing.solid && !this.isOccupied(lx, ly)) {
+        this.hop(lx, ly);
       }
       return;
     }

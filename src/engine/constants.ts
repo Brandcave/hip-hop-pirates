@@ -116,11 +116,28 @@ export const TEXT_SPEED_MS = 28;
 
 export type Dir = 'down' | 'up' | 'left' | 'right';
 
+/**
+ * Movement runs along the grid's *diagonals*, which is what makes an isometric
+ * world steerable with four keys.
+ *
+ * In a 2:1 lattice a step along one grid axis lands on a screen diagonal, so
+ * axis-aligned movement gives four diagonal headings and no sprite can face any
+ * of them — LPC draws north, south, east and west, and nothing in between. Step
+ * along the grid diagonals instead and the projection collapses them back to
+ * screen cardinals:
+ *
+ *   (-1,-1) straight up      (+1,-1) straight right
+ *   (+1,+1) straight down    (-1,+1) straight left
+ *
+ * Now each direction moves exactly the way its sprite faces. The grid, the
+ * collision rules and the map data are all untouched; only which neighbours
+ * count as adjacent has changed.
+ */
 export const DIR_VECTORS: Record<Dir, { x: number; y: number }> = {
-  down: { x: 0, y: 1 },
-  up: { x: 0, y: -1 },
-  left: { x: -1, y: 0 },
-  right: { x: 1, y: 0 },
+  up: { x: -1, y: -1 },
+  down: { x: 1, y: 1 },
+  left: { x: -1, y: 1 },
+  right: { x: 1, y: -1 },
 };
 
 /** Keyboard bindings, in the "A button / B button" spirit of the original. */
