@@ -8,6 +8,7 @@ import {
   zoomBy,
 } from './engine/constants';
 import { dayStartForHour } from './engine/time';
+import { VoxelScene } from './voxel/scene';
 import { BattleScene } from './scenes/BattleScene';
 import { BootScene } from './scenes/BootScene';
 import { WorldScene } from './scenes/WorldScene';
@@ -113,3 +114,41 @@ window.addEventListener(
   // Capture, to get ahead of anything the scenes bind on the window.
   true,
 );
+
+
+/**
+ * The voxel diorama, built lazily the first time it is asked for and stepped by
+ * the V key: OFF -> 15 -> 35 -> 50 -> 75 -> OFF, the same ladder shape the mod
+ * this borrows from uses. The isometric game keeps running underneath, so the
+ * two views are the same save at the same minute.
+ */
+let voxel: VoxelScene | null = null;
+
+function stepVoxel() {
+  if (!voxel) {
+    const theme = game.registry.get('theme');
+    const dayStart = game.registry.get('dayStart');
+    if (!theme || !dayStart) return;
+    voxel = new VoxelScene(theme, dayStart);
+    document.getElementById('screen')!.appendChild(voxel.canvas);
+    window.addEventListener('resize', () => voxel?.resize());
+  }
+  voxel.step();
+  if (game.canvas) game.canvas.style.visibility = voxel.enabled ? 'hidden' : 'visible';
+}
+
+window.addEventListener('keydown', (event) => {
+  if (event.code === 'KeyV') stepVoxel();
+});
+
+game.events.on(Phaser.Core.Events.POST_RENDER, () => {
+  if (!voxel?.enabled) return;
+  const world = game.scene.getScene('World') as unknown as {
+    tileX?: number;
+    tileY?: number;
+  } | null;
+  if (world && world.tileX !== undefined && world.tileY !== undefined) {
+    voxel.lookAt(world.tileX, world.tileY);
+  }
+  voxel.render();
+});
