@@ -5,6 +5,7 @@ import { SPRITE_BUILDERS } from './creatures';
 import {
   buildIsoGround,
   buildIsoProp,
+  PROPS,
   TERRAIN,
   variantAt,
   VARIANTS,
@@ -37,25 +38,51 @@ function groundCanvas(theme: Theme, def: TileDef, variant: number) {
   return buildIsoGround(def.iso.terrain, theme.swatches[terrain.swatch as SwatchName], variant);
 }
 
-/** Texture key for one variant of a tile's prop. */
-export function propKey(def: TileDef, variant: number) {
-  return `${def.key}_v${variant}`;
+/** Texture key for one frame of one variant of a tile's prop, in one neighbourhood. */
+export function propKey(def: TileDef, variant: number, frame = 0, neighbours = 0) {
+  return `${def.key}_v${variant}_f${frame}_m${neighbours}`;
+}
+
+/** Animation key for one variant of an animated prop. */
+export function propAnimKey(def: TileDef, variant: number, neighbours = 0) {
+  return `anim_${def.key}_v${variant}_m${neighbours}`;
 }
 
 /** Tiles with something standing on them get a depth-sorted sprite too. */
 export function isTallTile(def: TileDef) {
-  return def.iso.kind !== 'ground' && def.iso.kind !== 'water';
+  return def.iso.prop !== undefined;
 }
 
 export function buildAssets(scene: Phaser.Scene, theme: Theme) {
-  // One texture per prop per variant, so a field of tall grass isn't a stencil.
+  // One texture per prop, per variant, per animation frame — so a field of tall
+  // grass isn't a stencil, and anything that moves has frames to move through.
   for (const def of Object.values(TILES)) {
-    for (let v = 0; v < VARIANTS; v++) {
-      const prop = buildIsoProp(def.iso, theme.swatches[def.swatch], v);
-      if (!prop) break;
-      const key = propKey(def, v);
-      if (scene.textures.exists(key)) scene.textures.remove(key);
-      scene.textures.addCanvas(key, prop);
+    if (!def.iso.prop) continue;
+    const module = PROPS[def.iso.prop];
+    // 16 neighbourhoods for anything that cares what is beside it, 1 otherwise.
+    const masks = module.neighbourAware ? 16 : 1;
+    for (let v = 0; v < module.variants; v++) {
+      for (let m = 0; m < masks; m++) {
+        for (let f = 0; f < module.frames; f++) {
+          const prop = buildIsoProp(def.iso, theme.swatches[def.swatch], v, f, m);
+          if (!prop) continue;
+          const key = propKey(def, v, f, m);
+          if (scene.textures.exists(key)) scene.textures.remove(key);
+          scene.textures.addCanvas(key, prop);
+        }
+
+        if (module.frames <= 1) continue;
+        const anim = propAnimKey(def, v, m);
+        if (scene.anims.exists(anim)) scene.anims.remove(anim);
+        scene.anims.create({
+          key: anim,
+          frames: Array.from({ length: module.frames }, (_, f) => ({
+            key: propKey(def, v, f, m),
+          })),
+          frameRate: module.frameRate ?? 8,
+          repeat: -1,
+        });
+      }
     }
   }
 

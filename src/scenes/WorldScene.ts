@@ -12,7 +12,10 @@ import { Buttons, delay } from '../engine/input';
 import { MAPS, type MapDef, type MapObject } from '../data/maps';
 import { createMonster, type Monster } from '../data/species';
 import { worldTime } from '../engine/time';
-import { buildMapTexture, isTallTile, propKey } from '../gfx/assets';
+import { buildMapTexture, isTallTile, propAnimKey, propKey } from '../gfx/assets';
+import { blockHeight, PROPS } from '../gfx/iso';
+import { E, N, S, W } from '../gfx/props/kit';
+import { windPhase } from '../gfx/wind';
 import { ISO_H, ISO_W, isoDepth, isoScreen, variantAt, type IsoMetrics } from '../gfx/iso';
 import { idleFrame, walkAnimKey } from '../gfx/actorSheets';
 import { lightFor, type Light } from '../gfx/light';
@@ -54,17 +57,19 @@ interface CasterSpec {
 }
 
 function shadowCaster(def: TileDef): CasterSpec | null {
-  switch (def.iso.kind) {
+  switch (def.iso.prop) {
     case 'tree':
-      return { height: 20, girth: 22, shape: 'blob' };
+      return { height: 40, girth: 44, shape: 'blob' };
     case 'sign':
-      return { height: 10, girth: 9, shape: 'blob' };
-    case 'block':
-      // Buildings shadow with their own square footprint, corners and all.
-      return { height: def.iso.height ?? 16, girth: ISO_W, shape: 'diamond' };
-    default:
-      // Grass blades and flowers are too low to throw anything worth drawing.
+      return { height: 20, girth: 18, shape: 'blob' };
+    default: {
+      // Buildings shadow with their own square footprint, corners and all, at
+      // whatever height the building art says they stand.
+      const height = blockHeight(def.iso.prop);
+      if (height) return { height, girth: ISO_W, shape: 'diamond' };
+      // Grass blades, flowers and water are too low to throw anything worth drawing.
       return null;
+    }
   }
 }
 
@@ -78,9 +83,14 @@ interface CastShadow {
   girth: number;
 }
 
+/**
+ * NPCs amble: a step takes them well over twice as long as the player's, which
+ * reads as strolling next to the player's purposeful walk.
+ */
+const NPC_WALK_MS = 460;
 /** How long an NPC stands still between steps, before its next decision. */
-const NPC_PAUSE_MIN_MS = 500;
-const NPC_PAUSE_MAX_MS = 2200;
+const NPC_PAUSE_MIN_MS = 1800;
+const NPC_PAUSE_MAX_MS = 5000;
 /** How often a decision comes out as a glance rather than a step. */
 const NPC_TURN_CHANCE = 0.3;
 
@@ -222,10 +232,45 @@ export class WorldScene extends Phaser.Scene {
     return { x: p.x, y: p.y + FOOT_OFFSET };
   }
 
-  /** Variant texture for a prop, falling back for props that have only one. */
-  private propTexture(def: TileDef, x: number, y: number) {
-    const key = propKey(def, variantAt(x, y));
-    return this.textures.exists(key) ? key : propKey(def, 0);
+  /**
+   * Which orthogonal neighbours carry the same prop. Lets a wall know it is in
+   * the middle of a terrace rather than standing alone.
+   */
+  private neighbourMask(def: TileDef, x: number, y: number) {
+    if (!def.iso.prop || !PROPS[def.iso.prop].neighbourAware) return 0;
+    const same = (nx: number, ny: number) =>
+      TILES[this.map.layout[ny]?.[nx]]?.iso.prop === def.iso.prop;
+    return (
+      (same(x, y - 1) ? N : 0) |
+      (same(x + 1, y) ? E : 0) |
+      (same(x, y + 1) ? S : 0) |
+      (same(x - 1, y) ? W : 0)
+    );
+  }
+
+  /** Variant of a prop at this cell, clamped for props that have only one. */
+  private propVariant(def: TileDef, x: number, y: number) {
+    const module = def.iso.prop ? PROPS[def.iso.prop] : null;
+    return module ? variantAt(x, y) % module.variants : 0;
+  }
+
+  /**
+   * Start an animated prop mid-cycle. The offset comes from the wind, so a gust
+   * crosses the field instead of every tile bending on the same beat — the whole
+   * point of animating grass at all.
+   */
+  private animateProp(
+    sprite: Phaser.GameObjects.Sprite,
+    def: TileDef,
+    variant: number,
+    mask: number,
+    x: number,
+    y: number,
+  ) {
+    const key = propAnimKey(def, variant, mask);
+    if (!this.anims.exists(key)) return;
+    sprite.play(key);
+    sprite.anims.setProgress(windPhase(x, y));
   }
 
   /**
@@ -238,10 +283,13 @@ export class WorldScene extends Phaser.Scene {
         const def = TILES[this.map.layout[y][x]];
         if (!def || !isTallTile(def)) continue;
         const p = isoScreen(x, y, this.metrics);
-        this.add
-          .image(p.x, p.y + ISO_H / 2, this.propTexture(def, x, y))
+        const variant = this.propVariant(def, x, y);
+        const mask = this.neighbourMask(def, x, y);
+        const sprite = this.add
+          .sprite(p.x, p.y + ISO_H / 2, propKey(def, variant, 0, mask))
           .setOrigin(0.5, 1)
           .setDepth(isoDepth(x, y));
+        this.animateProp(sprite, def, variant, mask, x, y);
 
         const caster = shadowCaster(def);
         if (caster) {
@@ -444,13 +492,16 @@ export class WorldScene extends Phaser.Scene {
     npc.y = ny;
 
     npc.sprite.play(walkAnimKey('npc', dir), true);
+    // The cycle is authored for the player's pace, so slow the legs by exactly
+    // as much as the step — otherwise a strolling NPC scurries on the spot.
+    npc.sprite.anims.timeScale = WALK_MS / NPC_WALK_MS;
     npc.sprite.setFlipX(dir === 'left');
     const to = this.screenPos(nx, ny);
     this.tweens.add({
       targets: npc.sprite,
       x: to.x,
       y: to.y,
-      duration: WALK_MS,
+      duration: NPC_WALK_MS,
       onUpdate: () => npc.sprite.setDepth(npc.sprite.y + 0.5),
       onComplete: () => {
         npc.from = null;

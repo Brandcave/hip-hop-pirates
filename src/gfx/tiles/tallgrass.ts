@@ -1,3 +1,4 @@
+import { propCanvas, type PropModule } from '../props/kit';
 import {
   fillDiamond,
   HALF_H,
@@ -9,6 +10,7 @@ import {
   span,
   dot,
   type Swatch,
+  VARIANTS,
 } from './kit';
 
 /**
@@ -180,3 +182,23 @@ export function drawTallGrassBlades(
     }
   }
 }
+
+/**
+ * The blades, as a depth-sorted sprite standing above the tile.
+ *
+ * `frames` is 1 today — a still stand of grass. Raising it is how the grass
+ * starts to move in the wind: frame `frames - 1` must lead back into frame 0
+ * without a jump, and the whole field shares one cycle with a per-tile phase
+ * offset (see gfx/wind.ts), so a gust travels rather than everything bending at
+ * once.
+ */
+export const tallGrassBlades: PropModule = {
+  frames: 1,
+  variants: VARIANTS,
+  frameRate: 8,
+  build(pal: Swatch, variant: number, _frame: number) {
+    const { el, ctx } = propCanvas(BLADE_HEIGHT);
+    drawTallGrassBlades(ctx, pal, variant);
+    return el;
+  },
+};

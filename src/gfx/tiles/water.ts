@@ -1,4 +1,15 @@
-import { HALF_H, HALF_W, ISO_H, dot, fillDiamond, rng, rowSpan, type Swatch } from './kit';
+import { propCanvas, type PropModule } from '../props/kit';
+import {
+  HALF_H,
+  HALF_W,
+  ISO_H,
+  dot,
+  fillDiamond,
+  rng,
+  rowSpan,
+  VARIANTS,
+  type Swatch,
+} from './kit';
 
 /**
  * Water. A pond is many tiles of this butted together, so it has to read as one
@@ -39,14 +50,28 @@ function axes(x: number, y: number) {
 /** Discs of slack water, in ground-plane coordinates so they stay circular. */
 type Calm = { p: number; q: number; r: number };
 
+/**
+ * The still base of the water, baked into the map with the rest of the ground.
+ * Everything that moves lives in `waterSurface` below.
+ */
+export function drawWaterBase(
+  ctx: CanvasRenderingContext2D,
+  pal: Swatch,
+  _variant: number,
+  top = 0,
+) {
+  fillDiamond(ctx, top, pal[2]);
+}
+
 export function drawWater(
   ctx: CanvasRenderingContext2D,
   pal: Swatch,
   variant: number,
   top = 0,
+  skipBase = false,
 ) {
   // Identical under every variant — the colour of the pond must not band.
-  fillDiamond(ctx, top, pal[2]);
+  if (!skipBase) fillDiamond(ctx, top, pal[2]);
 
   const pick = rng(variant * 977 + 41);
   const spots: Calm[] = [];
@@ -116,3 +141,21 @@ export function drawWater(
     }
   }
 }
+
+/**
+ * The moving surface: crests and troughs only, over a transparent base, so it
+ * can be drawn as a sprite above the baked water and animated.
+ *
+ * `frames` is 1 today — a still surface. Raising it is how the water starts to
+ * move: frame `frames - 1` must lead back into frame 0 without a jump.
+ */
+export const waterSurface: PropModule = {
+  frames: 1,
+  variants: VARIANTS,
+  frameRate: 6,
+  build(pal: Swatch, variant: number, _frame: number) {
+    const { el, ctx } = propCanvas(0);
+    drawWater(ctx, pal, variant, 0, true);
+    return el;
+  },
+};

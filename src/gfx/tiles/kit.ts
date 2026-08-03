@@ -82,6 +82,42 @@ export function span(
   }
 }
 
+/** Last row of the diamond covering column `x` — where an extruded face starts. */
+export function bottomRow(x: number) {
+  const d = x < HALF_W ? x : ISO_W - 1 - x;
+  return HALF_H + Math.floor(d / (ISO_W / ISO_H));
+}
+
+/** The two extruded side faces below a diamond, for anything with height. */
+export function drawSides(
+  ctx: CanvasRenderingContext2D,
+  top: number,
+  height: number,
+  left: string,
+  right: string,
+) {
+  for (let x = 0; x < ISO_W; x++) {
+    ctx.fillStyle = x < HALF_W ? left : right;
+    ctx.fillRect(x, top + bottomRow(x) + 1, 1, height);
+  }
+}
+
+/** Filled ellipse, hard-edged. The workhorse for canopies and blobs. */
+export function ellipse(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  rx: number,
+  ry: number,
+  color: string,
+) {
+  ctx.fillStyle = color;
+  for (let y = -ry; y <= ry; y++) {
+    const w = Math.floor(rx * Math.sqrt(Math.max(0, 1 - (y / ry) ** 2)));
+    if (w > 0) ctx.fillRect(cx - w, cy + y, w * 2, 1);
+  }
+}
+
 /** A single pixel, clipped to the diamond. */
 export function dot(
   ctx: CanvasRenderingContext2D,
